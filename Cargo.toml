@@ -1,0 +1,10 @@
+[package]
+name = "worker-storage-processor"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "worker-storage-processor"
+path = "src/cmd/api/main.rs"
+
+[dependencies]

@@ -1,0 +1,1 @@
+/Users/Desarrollo/Documents/Proyectos/SEIS_APP/BACKEND/storage/worker-storage-processor/target/debug/worker-storage-processor: /Users/Desarrollo/Documents/Proyectos/SEIS_APP/BACKEND/storage/worker-storage-processor/src/main.rs
