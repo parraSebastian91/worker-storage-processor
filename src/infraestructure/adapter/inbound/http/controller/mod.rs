@@ -1,2 +1,2 @@
 
-pub mod health_check_controller;
+pub mod healthcheck_controller;

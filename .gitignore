@@ -1,0 +1,30 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Cargo local config (often machine-specific)
+.cargo/
+
+# Logs and temp files
+*.log
+logs/
+tmp/
+temp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker local overrides
+docker-compose.override.yml

@@ -5,6 +5,44 @@ edition = "2021"
 
 [[bin]]
 name = "worker-storage-processor"
-path = "src/cmd/api/main.rs"
+path = "cmd/api/main.rs"
 
 [dependencies]
+# Async Runtime
+tokio = { version = "1.40", features = ["full"] }
+async-trait = "0.1"
+futures-lite = "2.3"
+axum = "0.7"
+
+# Mensajería
+lapin = "2.5"
+
+# Serialización
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Configuración
+config = "0.14"
+dotenvy = "0.15"
+
+# Logging y Observabilidad
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+# Manejo de errores
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Utilidades
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.21"
+
+# Redis
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+
+# Storage
+minio = "0.3.0"
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
