@@ -8,10 +8,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures_lite::stream::StreamExt;
-use lapin::{
-    options::*,
-    types::{FieldTable},
-};
+use lapin::{options::*, types::FieldTable};
 use tracing::{debug, error, info};
 
 #[async_trait]
@@ -41,6 +38,11 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
         while let Some(delivery_result) = consumer.next().await {
             match delivery_result {
                 Ok(delivery) => {
+                    let mut headers = RabbitMQConsumerImpl::get_headers(&delivery);
+                    if !headers.contains_key("routing_key") {
+                        headers.insert("routing_key".to_string(), delivery.routing_key.to_string());
+                    }
+
                     let delivery_tag = delivery.delivery_tag;
                     debug!("Mensaje recibido - delivery_tag: {}", delivery_tag);
 
@@ -49,9 +51,32 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                         Ok(p) => p,
                         Err(e) => {
                             error!("Error deserializando mensaje: {}", e);
-                            // Nack con requeue para intentar procesar nuevamente
-                            if let Err(nack_err) = self.nack(delivery_tag, true).await {
-                                error!("Error enviando nack: {}", nack_err);
+                            let should_requeue = self.should_requeue(headers.clone());
+                            if should_requeue {
+                                match self
+                                    .publish_retry_message(delivery.data.clone(), headers.clone())
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        if let Err(ack_err) = self.ack(delivery_tag).await {
+                                            error!(
+                                                "Error haciendo ACK después de reencolar: {}",
+                                                ack_err
+                                            );
+                                        }
+                                    }
+                                    Err(requeue_err) => {
+                                        error!(
+                                            "Error reencolando mensaje inválido: {}",
+                                            requeue_err
+                                        );
+                                        if let Err(nack_err) = self.nack(delivery_tag, false).await {
+                                            error!("Error haciendo NACK de fallback: {}", nack_err);
+                                        }
+                                    }
+                                }
+                            } else if let Err(nack_err) = self.nack(delivery_tag, false).await {
+                                error!("Error haciendo NACK al superar retries: {}", nack_err);
                             }
                             continue; // Saltar al siguiente mensaje
                         }
@@ -70,15 +95,45 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                         }
                         Err(e) => {
                             error!("Error procesando mensaje: {}", e);
-                            // Nack con requeue para intentar procesar nuevamente
-                            if let Err(nack_err) = self.nack(delivery_tag, true).await {
-                                error!("Error enviando nack: {}", nack_err);
+                            let should_requeue = self.should_requeue(headers.clone());
+                            if should_requeue {
+                                match self
+                                    .publish_retry_message(delivery.data.clone(), headers.clone())
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        if let Err(ack_err) = self.ack(delivery_tag).await {
+                                            error!(
+                                                "Error haciendo ACK después de reencolar: {}",
+                                                ack_err
+                                            );
+                                        }
+                                    }
+                                    Err(requeue_err) => {
+                                        error!(
+                                            "Error reencolando con retry_count incrementado: {}",
+                                            requeue_err
+                                        );
+                                        if let Err(nack_err) = self.nack(delivery_tag, false).await
+                                        {
+                                            error!("Error haciendo NACK de fallback: {}", nack_err);
+                                        }
+                                    }
+                                }
+                            } else {
+                                info!(
+                                    "Máximo de reintentos alcanzado. Publicando mensaje de aborto."
+                                );
+                                if let Err(nack_err) = self.nack(delivery_tag, false).await {
+                                    error!("Error haciendo NACK de fallback: {}", nack_err);
+                                }
                             }
                         }
                     }
                 }
                 Err(e) => {
                     error!("Error al consumir mensaje: {}", e);
+                   
                 }
             }
         }

@@ -14,7 +14,7 @@ impl RedisCacheImpl {
     pub async fn new(
         host: &str,
         port: u16,
-        password: &str,
+        _: &str,
         db: u8,
         ttl: usize,
     ) -> Result<Self, RepositoryError> {

@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use lapin::{
-    options::*, types::FieldTable, Channel, Connection, ConnectionProperties, ExchangeKind,
+    BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind, message::Delivery, options::*, types::{AMQPValue, FieldTable, ShortString}
 };
 
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
-use crate::domain::errors::queue_error::QueueError;
+use crate::domain::errors::{consumer_error::ConsumerError, queue_error::QueueError};
 
 pub struct RabbitMQConsumerImpl {
     pub channel: Channel,
@@ -105,5 +107,104 @@ impl RabbitMQConsumerImpl {
             queue_name: queue_name.to_string(),
             max_retries, // Aquí puedes establecer un valor predeterminado o pasarlo como parámetro
         })
+    }
+
+    pub fn get_headers(delivery: &Delivery) -> HashMap<String, String> {
+        delivery
+            .properties
+            .headers()
+            .as_ref()
+            .map(|h| {
+                h.inner()
+                    .iter()
+                    .filter_map(|(k, v)| match v {
+                        AMQPValue::LongString(s) => Some((k.to_string(), s.to_string())),
+                        AMQPValue::ShortString(s) => Some((k.to_string(), s.to_string())),
+                        AMQPValue::LongInt(b) => Some((k.to_string(), b.to_string())),
+                        AMQPValue::Boolean(b) => Some((k.to_string(), b.to_string())),
+                        _ => {
+                            warn!("Tipo de header no soportado - key: {}, value: {:?}", k, v);
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn should_requeue(&self, headers: HashMap<String, String>) -> bool {
+        let retry_count = headers
+            .get("retry_count")
+            .or_else(|| headers.get("retryCount"))
+            .and_then(|value| value.trim().parse::<u32>().ok());
+
+        match retry_count {
+            Some(count) if count >= self.max_retries => {
+                warn!(
+                    "Mensaje alcanzó el máximo de reintentos ({}). No se reencolará.",
+                    count
+                );
+                false
+            }
+            _ => true,
+        }
+    }
+
+    pub async fn publish_retry_message(
+        &self,
+        message: Vec<u8>,
+        headers: HashMap<String, String>,
+    ) -> Result<u32, ConsumerError> {
+        let target_routing_key = headers
+            .get("routing_key")
+            .cloned()
+            .unwrap_or_else(|| "#".to_string());
+
+        let new_retry_count = headers
+            .get("retry_count")
+            .or_else(|| headers.get("retryCount"))
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .unwrap_or(0) + 1;
+
+        let mut amqp_headers = FieldTable::default();
+
+        for (k, v) in &headers {
+            if k != "retry_count" && k != "retryCount" {
+                amqp_headers.insert(
+                    ShortString::from(k.as_str()),
+                    AMQPValue::LongString(v.clone().into()),
+                );
+            }
+        }
+
+        amqp_headers.insert(
+            ShortString::from("retry_count"),
+            AMQPValue::LongString(new_retry_count.to_string().into()),
+        );
+
+        let properties = BasicProperties::default().with_headers(amqp_headers);
+        self.channel
+            .basic_publish(
+                &self.exchange_name,
+                &target_routing_key,
+                BasicPublishOptions::default(),
+                &message,
+                properties,
+            )
+            .await
+            .map_err(|e| {
+                ConsumerError::NackError(format!("Error publicando mensaje de reintento: {}", e))
+            })?
+            .await
+            .map_err(|e| {
+                ConsumerError::NackError(format!("Error confirmando mensaje de reintento: {}", e))
+            })?;
+
+        debug!(
+            "Mensaje reencolado con retry_count={} para routing_key={}",
+            new_retry_count, target_routing_key
+        );
+
+        Ok(new_retry_count)
     }
 }

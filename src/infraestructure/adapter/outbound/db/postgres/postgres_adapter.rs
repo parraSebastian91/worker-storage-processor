@@ -12,6 +12,8 @@ impl IObjectDBRepository for PostgresClient {
         // 2. Ejecutar una consulta SQL para insertar o actualizar los metadatos
         // 3. Manejar errores específicos y retornar un RepositoryError si algo falla
 
+        let sql = "SELECT id, asset_id, variant_name, url_path, metadata, created_at FROM media.media_variants";
+
         Ok(())
     }
 

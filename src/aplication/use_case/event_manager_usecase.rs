@@ -41,6 +41,8 @@ impl IEventManagerUseCase for EventManagerUseCase {
         info!("Manejando mensaje con EventManagerUseCase...");
         info!("Payload recibido: {:?}", _payload);
 
+        
+
         // Aquí iría la lógica para manejar el evento, por ejemplo:
         // 1. Validar el payload
         // 2. Procesar el evento (ej. guardar en base de datos, actualizar cache, etc.)
