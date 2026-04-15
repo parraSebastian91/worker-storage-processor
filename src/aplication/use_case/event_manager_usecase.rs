@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use crate::{
     aplication::service::event_manager_service::EventManagerService,
@@ -19,7 +19,7 @@ use crate::{
     },
 };
 use async_trait::async_trait;
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct EventManagerUseCase {
     object_storaje: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
@@ -45,17 +45,32 @@ impl IEventManagerUseCase for EventManagerUseCase {
     }
 
     async fn handle_message(&self, _payload: PublishPayload) -> Result<(), HandlerError> {
+        let started_at = Instant::now();
+        let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
         let _ = self.object_storaje.len();
         let _ = Arc::strong_count(&self.object_repository);
 
-        info!("Manejando mensaje con EventManagerUseCase...");
-        info!("Payload recibido: {:?}", _payload);
+        info!(
+            correlation_id = %correlation_id,
+            asset_id = %_payload.event.asset_id,
+            media_type = %_payload.event.media_type,
+            owner_uuid = %_payload.event.owner_uuid,
+            storage_key = %_payload.event.storage_key,
+            "Inicio de manejo de mensaje"
+        );
 
         self.object_repository
             .update_state(&_payload.event.asset_id, Processing)
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        info!(
+            correlation_id = %correlation_id,
+            asset_id = %_payload.event.asset_id,
+            new_state = "Processing",
+            "Estado actualizado en base de datos"
+        );
 
+        let process_started_at = Instant::now();
         let _result_process = match _payload.event.media_type.as_str() {
             MEDIA_TYPE_IMAGE => {
                 self.event_manager_service
@@ -70,12 +85,23 @@ impl IEventManagerUseCase for EventManagerUseCase {
                     .await?
             }
             _ => {
-                info!("Tipo de medio no soportado: {}", _payload.event.media_type);
+                warn!(
+                    correlation_id = %correlation_id,
+                    asset_id = %_payload.event.asset_id,
+                    media_type = %_payload.event.media_type,
+                    "Tipo de medio no soportado"
+                );
                 return Err(HandlerError::UnsupportedMediaType(
                     _payload.event.media_type,
                 ));
             }
         };
+        info!(
+            correlation_id = %correlation_id,
+            asset_id = %_payload.event.asset_id,
+            elapsed_ms = process_started_at.elapsed().as_millis(),
+            "Procesamiento principal finalizado"
+        );
 
         // let final_path = format!("`profile-pictures/{}/{}/%s-%s.%s`", _payload.event.storage_key);
 
@@ -83,6 +109,12 @@ impl IEventManagerUseCase for EventManagerUseCase {
             .delete_object_temp("", &_payload.event.storage_key)
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        info!(
+            correlation_id = %correlation_id,
+            asset_id = %_payload.event.asset_id,
+            storage_key = %_payload.event.storage_key,
+            "Objeto temporal eliminado"
+        );
 
         let storage_key_final = _payload
             .event
@@ -99,6 +131,14 @@ impl IEventManagerUseCase for EventManagerUseCase {
             )
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        info!(
+            correlation_id = %correlation_id,
+            asset_id = %_payload.event.asset_id,
+            new_state = "Ready",
+            final_storage_key = %storage_key_final,
+            elapsed_ms = started_at.elapsed().as_millis(),
+            "Mensaje procesado completamente"
+        );
 
         Ok(())
     }

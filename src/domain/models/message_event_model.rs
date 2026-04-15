@@ -38,6 +38,8 @@ pub struct StorageModel {
 pub struct PublishPayload {
     pub event: StorageModel,
     pub recipe: RecipeMediaModel,
+    #[serde(default)]
+    pub correlation_id: Option<String>,
 }
 
 /// Representa un mensaje recibido de la cola
@@ -70,4 +72,5 @@ pub struct VariantMetadataModel {
     pub size: String, // sm, md, lg ...
     pub width: i32,
     pub height: i32,
+    pub headers: String, // Cualquier otro metadato relevante
 }

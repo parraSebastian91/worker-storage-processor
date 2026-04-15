@@ -9,7 +9,9 @@ use crate::{
 use async_trait::async_trait;
 use futures_lite::stream::StreamExt;
 use lapin::{options::*, types::FieldTable};
+use std::time::Instant;
 use tracing::{debug, error, info};
+use uuid::Uuid;
 
 #[async_trait]
 impl IQueueConsumer for RabbitMQConsumerImpl {
@@ -47,7 +49,7 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                     debug!("Mensaje recibido - delivery_tag: {}", delivery_tag);
 
                     // Deserializar el mensaje
-                    let payload = match serde_json::from_slice::<PublishPayload>(&delivery.data) {
+                    let mut payload = match serde_json::from_slice::<PublishPayload>(&delivery.data) {
                         Ok(p) => p,
                         Err(e) => {
                             error!("Error deserializando mensaje: {}", e);
@@ -81,10 +83,35 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                             continue; // Saltar al siguiente mensaje
                         }
                     };
+
+                    let correlation_id = headers
+                        .get("x-correlation-id")
+                        .or_else(|| headers.get("correlation_id"))
+                        .cloned()
+                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+                    payload.correlation_id = Some(correlation_id.clone());
+
+                    info!(
+                        delivery_tag,
+                        correlation_id = %correlation_id,
+                        routing_key = %delivery.routing_key,
+                        "Correlation ID resuelta para mensaje"
+                    );
                     debug!("Payload deserializado: {:?}", payload);
+
+                    let event_started_at = Instant::now();
+                    let asset_id = payload.event.asset_id.clone();
 
                     match handler(payload).await {
                         Ok(_) => {
+                            info!(
+                                delivery_tag,
+                                correlation_id = %correlation_id,
+                                asset_id = %asset_id,
+                                elapsed_ms = event_started_at.elapsed().as_millis(),
+                                "Evento procesado exitosamente"
+                            );
                             debug!(
                                 "Mensaje procesado exitosamente - delivery_tag: {}",
                                 delivery_tag
@@ -94,6 +121,14 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                             }
                         }
                         Err(e) => {
+                            error!(
+                                delivery_tag,
+                                correlation_id = %correlation_id,
+                                asset_id = %asset_id,
+                                elapsed_ms = event_started_at.elapsed().as_millis(),
+                                error = %e,
+                                "Evento procesado con error"
+                            );
                             error!("Error procesando mensaje: {}", e);
                             let should_requeue = self.should_requeue(headers.clone());
                             if should_requeue {
