@@ -49,7 +49,7 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                     debug!("Mensaje recibido - delivery_tag: {}", delivery_tag);
 
                     // Deserializar el mensaje
-                    let mut payload = match serde_json::from_slice::<PublishPayload>(&delivery.data) {
+                    let payload = match serde_json::from_slice::<PublishPayload>(&delivery.data) {
                         Ok(p) => p,
                         Err(e) => {
                             error!("Error deserializando mensaje: {}", e);
@@ -84,17 +84,22 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                         }
                     };
 
-                    let correlation_id = headers
-                        .get("x-correlation-id")
-                        .or_else(|| headers.get("correlation_id"))
-                        .cloned()
-                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                    // let correlation_id = headers
+                    //     .get("x-correlation-id")
+                    //     .or_else(|| headers.get("correlation_id"))
+                    //     .cloned()
+                    //     .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-                    payload.correlation_id = Some(correlation_id.clone());
+                    // payload.correlation_id = Some(correlation_id.clone());
+
+                    let correlation_id = payload
+                        .correlation_id
+                        .clone()
+                        .unwrap_or_else(|| Uuid::new_v4().to_string());
 
                     info!(
                         delivery_tag,
-                        correlation_id = %correlation_id,
+                        correlation_id = &correlation_id,
                         routing_key = %delivery.routing_key,
                         "Correlation ID resuelta para mensaje"
                     );
@@ -107,7 +112,7 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                         Ok(_) => {
                             info!(
                                 delivery_tag,
-                                correlation_id = %correlation_id,
+                                correlation_id = &correlation_id,
                                 asset_id = %asset_id,
                                 elapsed_ms = event_started_at.elapsed().as_millis(),
                                 "Evento procesado exitosamente"
@@ -123,7 +128,7 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                         Err(e) => {
                             error!(
                                 delivery_tag,
-                                correlation_id = %correlation_id,
+                                correlation_id = &correlation_id,
                                 asset_id = %asset_id,
                                 elapsed_ms = event_started_at.elapsed().as_millis(),
                                 error = %e,

@@ -109,11 +109,10 @@ impl IObjectDBRepository for PostgresClient {
         let id = Uuid::parse_str(_key)
             .map_err(|e| RepositoryError::NotFound(format!("UUID inválido '{}': {}", _key, e)))?;
 
-        let sql = "UPDATE media.media_assets SET status = $1, storage_key = $2 WHERE id = $3";
+        let sql = "UPDATE media.media_assets SET status = $1 WHERE id = $2";
 
         let result = sqlx::query(sql)
             .bind(_state)
-            .bind(_new_key)
             .bind(id)
             .execute(self.pool())
             .await
