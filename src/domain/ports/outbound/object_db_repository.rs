@@ -12,4 +12,5 @@ pub trait IObjectDBRepository: Send + Sync {
     async fn exists_metadata(&self, _key: &str) -> Result<bool, RepositoryError>;
     async fn update_state(&self, _key: &str, _state: MediaStatus) -> Result<(), RepositoryError>;
     async fn create_variant(&self, media: VariantModel) -> Result<(), RepositoryError>;
+    async fn update_state_and_key_storage(&self, _key: &str, _new_key: &str,_state: MediaStatus) -> Result<(), RepositoryError>;
 }

@@ -14,6 +14,7 @@ use crate::{
         },
     },
 };
+use regex::Regex;
 use tracing::info;
 pub struct EventManagerService {
     object_storage: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
@@ -139,15 +140,18 @@ impl EventManagerService {
         _key: &str,
         _data: Vec<u8>,
     ) -> Result<(), HandlerError> {
+        let spaces_regex = Regex::new(r"\s+")
+            .map_err(|e| HandlerError::RepositoryError(format!("Regex inválida: {}", e)))?;
+        let key_no_spaces = spaces_regex.replace_all(_key.trim(), "_");
         for service_storage in self.object_storage.values() {
             match service_storage
-                .upload_file(_bucket, _key, _data.clone())
+                .upload_file(_bucket, &key_no_spaces, _data.clone())
                 .await
             {
                 Ok(_) => {
                     info!(
                         "Archivo subido exitosamente a {} con clave {}",
-                        _bucket, _key
+                        _bucket, key_no_spaces
                     );
                     return Ok(());
                 }
@@ -159,6 +163,27 @@ impl EventManagerService {
         }
         Err(HandlerError::RepositoryError(
             "No se pudo subir el archivo a ningún servicio de almacenamiento".to_string(),
+        ))
+    }
+
+    pub async fn delete_object_temp(&self, _bucket: &str, _key: &str) -> Result<(), HandlerError> {
+        for service_storage in self.object_storage.values() {
+            match service_storage.delete_file(_bucket, _key).await {
+                Ok(_) => {
+                    info!(
+                        "Archivo eliminado exitosamente de {} con clave {}",
+                        _bucket, _key
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    info!("Error al eliminar el archivo: {}", e);
+                    continue;
+                }
+            }
+        }
+        Err(HandlerError::RepositoryError(
+            "No se pudo eliminar el archivo de ningún servicio de almacenamiento".to_string(),
         ))
     }
 }

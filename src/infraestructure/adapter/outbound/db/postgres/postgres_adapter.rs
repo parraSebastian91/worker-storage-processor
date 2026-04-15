@@ -74,12 +74,9 @@ impl IObjectDBRepository for PostgresClient {
     }
 
     async fn create_variant(&self, media: VariantModel) -> Result<(), RepositoryError> {
-        // Aquí iría la lógica para crear una nueva variante de media en Postgres, por ejemplo:
-        // 1. Convertir los parámetros al formato adecuado para la base de datos
-        // 2. Ejecutar una consulta SQL para insertar la nueva variante
-        // 3. Manejar errores específicos y retornar un RepositoryError si algo falla
-        let id = Uuid::parse_str(&media.asset_id)
-            .map_err(|e| RepositoryError::NotFound(format!("UUID inválido '{}': {}", &media.asset_id, e)))?;
+        let id = Uuid::parse_str(&media.asset_id).map_err(|e| {
+            RepositoryError::NotFound(format!("UUID inválido '{}': {}", &media.asset_id, e))
+        })?;
         let metadata_json = Json(media.metadata.clone());
 
         let sql = "INSERT INTO media.media_variants (asset_id, variant_name, url_path, metadata) VALUES ($1, $2, $3, $4)";
@@ -98,6 +95,36 @@ impl IObjectDBRepository for PostgresClient {
             return Err(RepositoryError::SaveError(format!(
                 "Error al insertar variante: {}",
                 media.asset_id
+            )));
+        }
+        Ok(())
+    }
+
+    async fn update_state_and_key_storage(
+        &self,
+        _key: &str,
+        _new_key: &str,
+        _state: MediaStatus,
+    ) -> Result<(), RepositoryError> {
+        let id = Uuid::parse_str(_key)
+            .map_err(|e| RepositoryError::NotFound(format!("UUID inválido '{}': {}", _key, e)))?;
+
+        let sql = "UPDATE media.media_assets SET status = $1, storage_key = $2 WHERE id = $3";
+
+        let result = sqlx::query(sql)
+            .bind(_state)
+            .bind(_new_key)
+            .bind(id)
+            .execute(self.pool())
+            .await
+            .map_err(|e| {
+                RepositoryError::ConnectionError(format!("Error ejecutando UPDATE: {}", e))
+            })?;
+
+        if result.rows_affected() == 0 {
+            return Err(RepositoryError::NotFound(format!(
+                "Activo no encontrado: {}",
+                _key
             )));
         }
         Ok(())

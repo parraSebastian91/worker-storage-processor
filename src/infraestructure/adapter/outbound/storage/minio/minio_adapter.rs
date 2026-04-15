@@ -47,11 +47,19 @@ impl IObjectStorageRepository for MinioClientAdapter {
 
     async fn delete_file(&self, _bucket: &str, _key: &str) -> Result<(), RepositoryError> {
         // Implementación de eliminación de archivo en Minio
+        self.client()
+            .delete_object(self.bucket(), _key)
+            .send()
+            .await
+            .map_err(|e| RepositoryError::DeleteError(e.to_string()))?;
         Ok(())
     }
 
     async fn exists_file(&self, _bucket: &str, _key: &str) -> Result<bool, RepositoryError> {
         // Implementación de verificación de existencia de archivo en Minio
-        Ok(false)
+        match self.client().stat_object(self.bucket(), _key).send().await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 }

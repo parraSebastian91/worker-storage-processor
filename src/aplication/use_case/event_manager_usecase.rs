@@ -5,7 +5,8 @@ use crate::{
     domain::{
         errors::handler_error::HandlerError,
         models::{
-            media_status_enum::MediaStatus::{Processing, Ready}, message_event_model::PublishPayload,
+            media_status_enum::MediaStatus::{Processing, Ready},
+            message_event_model::PublishPayload,
             MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO,
         },
         ports::{
@@ -57,7 +58,6 @@ impl IEventManagerUseCase for EventManagerUseCase {
 
         let _result_process = match _payload.event.media_type.as_str() {
             MEDIA_TYPE_IMAGE => {
-                
                 self.event_manager_service
                     .handle_image_process(_payload.clone())
                     .await?
@@ -77,12 +77,26 @@ impl IEventManagerUseCase for EventManagerUseCase {
             }
         };
 
-
         // let final_path = format!("`profile-pictures/{}/{}/%s-%s.%s`", _payload.event.storage_key);
 
+        self.event_manager_service
+            .delete_object_temp("", &_payload.event.storage_key)
+            .await
+            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+
+        let storage_key_final = _payload
+            .event
+            .storage_key
+            .split_once("/temp")
+            .map(|(base_path, _)| base_path.to_string())
+            .unwrap_or_else(|| _payload.event.storage_key.clone());
 
         self.object_repository
-            .update_state(&_payload.event.asset_id, Ready)
+            .update_state_and_key_storage(
+                &_payload.event.asset_id,
+                &storage_key_final,
+                Ready,
+            )
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 

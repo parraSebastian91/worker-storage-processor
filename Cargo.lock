@@ -5016,6 +5016,7 @@ dependencies = [
  "lapin",
  "minio",
  "redis",
+ "regex",
  "serde",
  "serde_json",
  "sqlx",

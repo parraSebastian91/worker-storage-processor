@@ -38,6 +38,7 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.21"
 bytes = "1"
+regex = "1"
 
 # Redis
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
