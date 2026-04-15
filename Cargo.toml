@@ -37,6 +37,7 @@ anyhow = "1.0"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.21"
+bytes = "1"
 
 # Redis
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
@@ -45,4 +46,15 @@ redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 minio = "0.3.0"
 
 # Database
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "macros", "json"] }
+
+# Image processor
+image = "0.25"
+fast_image_resize = "3.0"
+webp = "0.3"
+
+[profile.release]
+opt-level = 3          # Máxima optimización de código
+lto = true             # Habilita Link Time Optimization (más lento de compilar, más rápido al correr)
+codegen-units = 1      # Permite mejores optimizaciones globales
+panic = 'abort'        # Reduce el tamaño del binario y mejora ligeramente el rendimiento

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecipeMediaModel {
@@ -11,7 +11,7 @@ pub struct RecipeMediaModel {
     pub priority: i32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MediaSizeModel {
     // Ejemplo: "sm", "md", "lg"
     pub size: String,
@@ -20,6 +20,8 @@ pub struct MediaSizeModel {
     // Ejemplo: "webp"
     pub format: String,
     pub priority: i32,
+    #[serde(skip_deserializing, skip_serializing)]
+    pub bytes: Vec<u8>, // Puedes usar un tipo específico si tienes una estructura definida para los metadatos
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct StorageModel {
@@ -52,4 +54,20 @@ pub struct Message {
 
     /// Routing key (para RabbitMQ) o partition key
     pub routing_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VariantModel {
+    pub asset_id: String,
+    pub name: String,
+    pub url_path: String,
+    pub metadata: VariantMetadataModel, // Puedes usar un tipo específico si tienes una estructura definida para los metadatos
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VariantMetadataModel {
+    pub format: String, // webp, jpeg, png, etc.
+    pub size: String, // sm, md, lg ...
+    pub width: i32,
+    pub height: i32,
 }

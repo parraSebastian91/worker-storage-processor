@@ -1,5 +1,6 @@
 use axum::{routing::get, Router};
 use worker_storage_processor::aplication::service::event_manager_service::EventManagerService;
+use worker_storage_processor::aplication::service::image_manager_service::ImageManagerService;
 use worker_storage_processor::domain::ports::outbound::object_db_repository::IObjectDBRepository;
 use worker_storage_processor::infraestructure::adapter::inbound::http::controller::healthcheck_controller::{
     liveness, readiness, HealthcheckState,
@@ -8,7 +9,6 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tracing::{error, info};
-
 
 use worker_storage_processor::aplication::use_case::event_manager_usecase::EventManagerUseCase;
 use worker_storage_processor::domain::ports::inbound::event_manager_usecase::IEventManagerUseCase;
@@ -52,6 +52,10 @@ async fn main() -> anyhow::Result<()> {
     let _cache_client = init_cache_client(&config).await?;
     let _queue_client = init_queue_client(&config).await?;
 
+    // ========== Iniciador Serivicios de aplicacion ==========
+
+    let _image_manager_service = Arc::new(ImageManagerService::new());
+
     // =========== Inicializando Handler de la cola ===========
 
     let _database: Arc<dyn IObjectDBRepository> = _database;
@@ -59,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
     let event_manager_service = Arc::new(EventManagerService::new(
         _storage_clients.clone(),
         Arc::clone(&_database),
+        Arc::clone(&_image_manager_service),
     ));
 
     let event_manager = Arc::new(<EventManagerUseCase as IEventManagerUseCase>::new(
@@ -67,7 +72,6 @@ async fn main() -> anyhow::Result<()> {
         event_manager_service,
     ));
     let handler: QueueHandler = QueueHandler::new(_queue_client, event_manager);
-
 
     // =========== iniciando usecase para el handler de la cola ===========
 
@@ -90,7 +94,9 @@ fn setup_observability(config: &AppConfig) {
     info!("📋 Configuración cargada");
 }
 
-async fn init_storage_client(config: &AppConfig) -> anyhow::Result<HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>> {
+async fn init_storage_client(
+    config: &AppConfig,
+) -> anyhow::Result<HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>> {
     let mut clients: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>> =
         HashMap::new();
 
@@ -167,7 +173,10 @@ async fn init_queue_client(config: &AppConfig) -> anyhow::Result<Arc<dyn IQueueC
 // ============================================================================
 
 /// Ejecuta el worker con manejo de graceful shutdown
-async fn run_with_graceful_shutdown(handler: QueueHandler, config: Arc<AppConfig>) -> anyhow::Result<()> {
+async fn run_with_graceful_shutdown(
+    handler: QueueHandler,
+    config: Arc<AppConfig>,
+) -> anyhow::Result<()> {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
     // Capturar Ctrl+C

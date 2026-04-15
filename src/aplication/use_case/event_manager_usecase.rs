@@ -5,7 +5,7 @@ use crate::{
     domain::{
         errors::handler_error::HandlerError,
         models::{
-            media_status_enum::MediaStatus::Uploaded, message_event_model::PublishPayload,
+            media_status_enum::MediaStatus::{Processing, Ready}, message_event_model::PublishPayload,
             MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO,
         },
         ports::{
@@ -50,17 +50,23 @@ impl IEventManagerUseCase for EventManagerUseCase {
         info!("Manejando mensaje con EventManagerUseCase...");
         info!("Payload recibido: {:?}", _payload);
 
-        match _payload.event.media_type.as_str() {
+        self.object_repository
+            .update_state(&_payload.event.asset_id, Processing)
+            .await
+            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+
+        let _result_process = match _payload.event.media_type.as_str() {
             MEDIA_TYPE_IMAGE => {
+                
                 self.event_manager_service
-                    .handle_image_process(_payload)
+                    .handle_image_process(_payload.clone())
                     .await?
             }
             // Aquí podrías agregar más casos para otros tipos de medios, por ejemplo:
             // "video" => self.handle_video_process(_payload).await?,
             MEDIA_TYPE_VIDEO => {
                 self.event_manager_service
-                    .handle_video_process(_payload)
+                    .handle_video_process(_payload.clone())
                     .await?
             }
             _ => {
@@ -69,12 +75,16 @@ impl IEventManagerUseCase for EventManagerUseCase {
                     _payload.event.media_type,
                 ));
             }
-        }
+        };
 
-        // Aquí iría la lógica para manejar el evento, por ejemplo:
-        // 1. Validar el payload
-        // 2. Procesar el evento (ej. guardar en base de datos, actualizar cache, etc.)
-        // 3. Manejar errores específicos y retornar un HandlerError si algo falla
+
+        // let final_path = format!("`profile-pictures/{}/{}/%s-%s.%s`", _payload.event.storage_key);
+
+
+        self.object_repository
+            .update_state(&_payload.event.asset_id, Ready)
+            .await
+            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
         Ok(())
     }

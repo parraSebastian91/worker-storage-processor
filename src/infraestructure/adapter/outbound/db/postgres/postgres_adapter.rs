@@ -1,10 +1,13 @@
 use crate::{
     domain::{
-        errors::storage_error::RepositoryError, models::media_status_enum::MediaStatus, ports::outbound::object_db_repository::IObjectDBRepository
+        errors::storage_error::RepositoryError,
+        models::{media_status_enum::MediaStatus, message_event_model::VariantModel},
+        ports::outbound::object_db_repository::IObjectDBRepository,
     },
     infraestructure::adapter::outbound::db::postgres::postgres_client::PostgresClient,
 };
 use async_trait::async_trait;
+use sqlx::types::Json;
 use uuid::Uuid;
 
 #[async_trait]
@@ -15,7 +18,7 @@ impl IObjectDBRepository for PostgresClient {
         // 2. Ejecutar una consulta SQL para insertar o actualizar los metadatos
         // 3. Manejar errores específicos y retornar un RepositoryError si algo falla
 
-        let sql = "SELECT id, asset_id, variant_name, url_path, metadata, created_at FROM media.media_variants";
+        // let sql = "SELECT id, asset_id, variant_name, url_path, metadata, created_at FROM media.media_variants";
 
         Ok(())
     }
@@ -65,6 +68,36 @@ impl IObjectDBRepository for PostgresClient {
             return Err(RepositoryError::NotFound(format!(
                 "Activo no encontrado: {}",
                 _key
+            )));
+        }
+        Ok(())
+    }
+
+    async fn create_variant(&self, media: VariantModel) -> Result<(), RepositoryError> {
+        // Aquí iría la lógica para crear una nueva variante de media en Postgres, por ejemplo:
+        // 1. Convertir los parámetros al formato adecuado para la base de datos
+        // 2. Ejecutar una consulta SQL para insertar la nueva variante
+        // 3. Manejar errores específicos y retornar un RepositoryError si algo falla
+        let id = Uuid::parse_str(&media.asset_id)
+            .map_err(|e| RepositoryError::NotFound(format!("UUID inválido '{}': {}", &media.asset_id, e)))?;
+        let metadata_json = Json(media.metadata.clone());
+
+        let sql = "INSERT INTO media.media_variants (asset_id, variant_name, url_path, metadata) VALUES ($1, $2, $3, $4)";
+
+        let result = sqlx::query(sql)
+            .bind(id)
+            .bind(&media.name)
+            .bind(&media.url_path)
+            .bind(metadata_json)
+            .execute(self.pool())
+            .await
+            .map_err(|e| {
+                RepositoryError::ConnectionError(format!("Error ejecutando INSERT: {}", e))
+            })?;
+        if result.rows_affected() == 0 {
+            return Err(RepositoryError::SaveError(format!(
+                "Error al insertar variante: {}",
+                media.asset_id
             )));
         }
         Ok(())

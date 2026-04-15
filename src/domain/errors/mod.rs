@@ -3,3 +3,4 @@ pub mod config_error;
 pub mod queue_error;
 pub mod handler_error;
 pub mod consumer_error;
+pub mod media_error;
