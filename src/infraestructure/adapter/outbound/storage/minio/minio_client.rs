@@ -26,10 +26,11 @@ impl MinioClientAdapter{
             url_base
         );
 
-        let endpoint = url_base
-            .trim_start_matches("http://")
-            .trim_start_matches("https://")
-            .to_string();
+        let endpoint = if url_base.starts_with("http://") || url_base.starts_with("https://") {
+            url_base.clone()
+        } else {
+            format!("http://{}", url_base)
+        };
 
         let base_url: BaseUrl = match endpoint.parse() {
             Ok(base_url) => base_url,

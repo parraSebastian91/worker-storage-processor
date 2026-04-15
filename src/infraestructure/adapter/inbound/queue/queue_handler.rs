@@ -39,8 +39,21 @@ impl QueueHandler {
         self.consumer
             .consume(handler)
             .await
-            .map_err(|e| QueueError::   ConsumeError(e.to_string()))?;
+            .map_err(|e| QueueError::ConsumerError(e.to_string()))?;
 
+        Ok(())
+    }
+
+    /// Detiene el worker de forma ordenada
+    pub async fn shutdown(&self) -> Result<(), QueueError> {
+        info!("Deteniendo worker...");
+
+        self.consumer
+            .close()
+            .await
+            .map_err(|e| QueueError::ConsumerError(e.to_string()))?;
+
+        info!("Worker detenido");
         Ok(())
     }
 }

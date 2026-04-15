@@ -1,4 +1,4 @@
-use crate::domain::errors::storage_error::RepositoryError;
+use crate::domain::{errors::storage_error::RepositoryError, models::media_status_enum::MediaStatus};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -7,4 +7,5 @@ pub trait IObjectDBRepository: Send + Sync {
     async fn get_metadata(&self, _key: &str) -> Result<Option<Vec<u8>>, RepositoryError>;
     async fn delete_metadata(&self, _key: &str) -> Result<(), RepositoryError>;
     async fn exists_metadata(&self, _key: &str) -> Result<bool, RepositoryError>;
+    async fn update_state(&self, _key: &str, _state: MediaStatus) -> Result<(), RepositoryError>;
 }

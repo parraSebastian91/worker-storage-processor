@@ -30,7 +30,7 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
             .await
             .map_err(|e| {
                 error!("Error iniciando consumidor: {}", e);
-                ConsumerError::ConsumeError(e.to_string())
+                ConsumerError::ConsumerError(e.to_string())
             })?;
 
         info!("Consumidor iniciado. Esperando mensajes...");

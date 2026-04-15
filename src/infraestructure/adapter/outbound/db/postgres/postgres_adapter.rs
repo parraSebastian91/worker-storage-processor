@@ -1,8 +1,11 @@
-use crate::{domain::{
-    errors::storage_error::RepositoryError,
-    ports::outbound::object_db_repository::IObjectDBRepository,
-}, infraestructure::adapter::outbound::db::postgres::postgres_client::PostgresClient};
+use crate::{
+    domain::{
+        errors::storage_error::RepositoryError, models::media_status_enum::MediaStatus, ports::outbound::object_db_repository::IObjectDBRepository
+    },
+    infraestructure::adapter::outbound::db::postgres::postgres_client::PostgresClient,
+};
 use async_trait::async_trait;
+use uuid::Uuid;
 
 #[async_trait]
 impl IObjectDBRepository for PostgresClient {
@@ -41,5 +44,29 @@ impl IObjectDBRepository for PostgresClient {
         // 3. Manejar errores específicos y retornar un RepositoryError si algo falla
 
         Ok(false)
+    }
+
+    async fn update_state(&self, _key: &str, _state: MediaStatus) -> Result<(), RepositoryError> {
+        let id = Uuid::parse_str(_key)
+            .map_err(|e| RepositoryError::NotFound(format!("UUID inválido '{}': {}", _key, e)))?;
+
+        let sql = "UPDATE media.media_assets SET status = $1 WHERE id = $2";
+
+        let result = sqlx::query(sql)
+            .bind(_state)
+            .bind(id)
+            .execute(self.pool())
+            .await
+            .map_err(|e| {
+                RepositoryError::ConnectionError(format!("Error ejecutando UPDATE: {}", e))
+            })?;
+
+        if result.rows_affected() == 0 {
+            return Err(RepositoryError::NotFound(format!(
+                "Activo no encontrado: {}",
+                _key
+            )));
+        }
+        Ok(())
     }
 }

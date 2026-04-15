@@ -14,4 +14,7 @@ pub enum HandlerError {
 
     #[error("Documento no encontrado: {0}")]
     DocumentNotFound(String),
+
+    #[error("Tipo de medio no soportado: {0}")]
+    UnsupportedMediaType(String),
 }

@@ -1,4 +1,6 @@
 use axum::{routing::get, Router};
+use worker_storage_processor::aplication::service::event_manager_service::EventManagerService;
+use worker_storage_processor::domain::ports::outbound::object_db_repository::IObjectDBRepository;
 use worker_storage_processor::infraestructure::adapter::inbound::http::controller::healthcheck_controller::{
     liveness, readiness, HealthcheckState,
 };
@@ -52,9 +54,17 @@ async fn main() -> anyhow::Result<()> {
 
     // =========== Inicializando Handler de la cola ===========
 
+    let _database: Arc<dyn IObjectDBRepository> = _database;
+
+    let event_manager_service = Arc::new(EventManagerService::new(
+        _storage_clients.clone(),
+        Arc::clone(&_database),
+    ));
+
     let event_manager = Arc::new(<EventManagerUseCase as IEventManagerUseCase>::new(
         _storage_clients,
         _database,
+        event_manager_service,
     ));
     let handler: QueueHandler = QueueHandler::new(_queue_client, event_manager);
 

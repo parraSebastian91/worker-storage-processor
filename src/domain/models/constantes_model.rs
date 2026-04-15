@@ -1,0 +1,16 @@
+pub const STORAGE_OPERATION_PUT: &str = "putObject";
+pub const STORAGE_OPERATION_GET: &str = "getObject";
+pub const MEDIA_TYPE_IMAGE: &str = "IMAGE";
+pub const MEDIA_TYPE_VIDEO: &str = "VIDEO";
+pub const MEDIA_TYPE_DOCUMENT: &str = "DOCUMENT";
+pub const MEDIA_TYPE_ARCHIVE: &str = "ARCHIVE";
+pub const CATEGORY_PROCESS_USER_AVATAR: &str = "user-avatar";
+pub const CATEGORY_PROCESS_USER_BANNER: &str = "user-banner";
+pub const CATEGORY_PROCESS_DOCUMENT: &str = "document";
+pub const CATEGORY_PROCESS_SOCIAL_POST: &str = "social-post";
+pub const STATE_PROCESS_PENDING: &str = "PENDING";
+pub const STATE_PROCESS_UPLOADED: &str = "UPLOADED";
+pub const STATE_PROCESS_PROCESSING: &str = "PROCESSING";
+pub const STATE_PROCESS_READY: &str = "READY";
+pub const STATE_PROCESS_ERROR: &str = "ERROR";
+pub const STATE_PROCESS_UNSUPPORTED_TYPE: &str = "UNSUPPORTED_TYPE";

@@ -4,7 +4,7 @@ pub enum QueueError {
     ConnectionError(String),
     
     #[error("Error al consumir mensaje: {0}")]
-    ConsumeError(String),
+    ConsumerError(String),
     
     #[error("Error al hacer ACK: {0}")]
     AckError(String),
