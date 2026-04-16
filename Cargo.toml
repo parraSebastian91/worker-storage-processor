@@ -55,7 +55,20 @@ fast_image_resize = "3.0"
 webp = "0.3"
 
 [profile.release]
-opt-level = 3          # Máxima optimización de código
-lto = true             # Habilita Link Time Optimization (más lento de compilar, más rápido al correr)
-codegen-units = 1      # Permite mejores optimizaciones globales
+opt-level = 3
+lto = true             # Link Time Optimization: binario más rápido pero build lento (~producción)
+codegen-units = 1
+
+# Perfil para desarrollo local y Docker en dev.
+# - Sin LTO: el linker termina mucho más rápido
+# - codegen-units=8: paralelismo máximo en compilación (aprovecha los 8/12 cores del Ryzen 9 y M2)
+# - opt-level=2: optimizaciones razonables sin el costo de nivel 3
+# Uso: cargo build --profile dev-fast
+#       o en Dockerfile: --build-arg BUILD_PROFILE=dev-fast
+[profile.dev-fast]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 8
+debug = false
 panic = 'abort'        # Reduce el tamaño del binario y mejora ligeramente el rendimiento
