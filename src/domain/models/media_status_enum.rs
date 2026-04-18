@@ -6,4 +6,5 @@ pub enum MediaStatus {
     Processing,
     Ready,
     Error,
+    Deprecated,
 }

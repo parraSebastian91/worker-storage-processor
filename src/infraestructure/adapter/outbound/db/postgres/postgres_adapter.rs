@@ -1,14 +1,19 @@
 use crate::{
     domain::{
         errors::storage_error::RepositoryError,
-        models::{media_status_enum::MediaStatus, message_event_model::VariantModel},
+        models::{
+            media_status_enum::MediaStatus,
+            media_status_enum::MediaStatus::{Deprecated,Ready}, message_event_model::VariantModel,
+        },
         ports::outbound::object_db_repository::IObjectDBRepository,
+
     },
     infraestructure::adapter::outbound::db::postgres::postgres_client::PostgresClient,
 };
 use async_trait::async_trait;
 use sqlx::types::Json;
 use uuid::Uuid;
+use tracing::info;
 
 #[async_trait]
 impl IObjectDBRepository for PostgresClient {
@@ -125,6 +130,32 @@ impl IObjectDBRepository for PostgresClient {
                 "Activo no encontrado: {}",
                 _key
             )));
+        }
+        Ok(())
+    }
+
+    async fn deprecate_old_assets(&self, _key: &str, _category: &str) -> Result<(), RepositoryError> {
+        let id = Uuid::parse_str(_key)
+            .map_err(|e| RepositoryError::NotFound(format!("UUID inválido '{}': {}", _key, e)))?;
+
+        let sql = "update media.media_assets set status = $1 WHERE category = $2 and owner_id = $3 and status = $4";
+
+        let result = sqlx::query(sql)
+            .bind(Deprecated)
+            .bind(_category)
+            .bind(id)
+            .bind(Ready)
+            .execute(self.pool())   
+            .await
+            .map_err(|e| {
+                RepositoryError::ConnectionError(format!("Error ejecutando UPDATE: {}", e))
+            })?;
+
+        if result.rows_affected() == 0 {
+            info!(
+                "No existian assets antiguos para la categoria: {} usuario: {}",
+                _category, _key
+            );
         }
         Ok(())
     }

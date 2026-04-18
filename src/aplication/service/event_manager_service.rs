@@ -7,6 +7,9 @@ use crate::{
         models::{
             media_status_enum::MediaStatus::Processing,
             message_event_model::{PublishPayload, VariantMetadataModel, VariantModel},
+            constantes_model::{
+                CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER,
+            },
         },
         ports::outbound::{
             object_db_repository::IObjectDBRepository,
@@ -49,6 +52,21 @@ impl EventManagerService {
             recipe_name = %_payload.recipe.name,
             "Inicio de procesamiento de imagen"
         );
+
+        if _payload.event.category_process != CATEGORY_PROCESS_USER_AVATAR || 
+           _payload.event.category_process != CATEGORY_PROCESS_USER_BANNER {
+            info!(
+                correlation_id = %correlation_id,
+                asset_id = %_payload.event.asset_id,
+                media_type = %_payload.event.media_type,
+                category_process = %_payload.event.category_process,
+                "Se deprecan assets antiguos del usuario para esta categoria de proceso"
+            );
+            self.object_repository
+                .deprecate_old_assets(&_payload.event.owner_uuid, &_payload.event.category_process)
+                .await
+                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;            
+        }
 
         let download_started_at = Instant::now();
         let object = self
