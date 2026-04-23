@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RecipeMediaModel {
     pub name: String,
     // Ejemplo: ["sm", "md", "lg"]
@@ -23,7 +23,7 @@ pub struct MediaSizeModel {
     #[serde(skip_deserializing, skip_serializing)]
     pub bytes: Vec<u8>, // Puedes usar un tipo específico si tienes una estructura definida para los metadatos
 }
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StorageModel {
     pub asset_id: String,
     pub owner_uuid: String,
@@ -34,14 +34,14 @@ pub struct StorageModel {
     pub storage_key: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+// PublishPayload — cambiar el tipo de recipe:
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PublishPayload {
     pub event: StorageModel,
-    pub recipe: RecipeMediaModel,
+    pub recipe: Option<Recipe>, // <-- antes: Option<serde_json::Value>
     #[serde(default)]
     pub correlation_id: Option<String>,
 }
-
 /// Representa un mensaje recibido de la cola
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -69,8 +69,21 @@ pub struct VariantModel {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VariantMetadataModel {
     pub format: String, // webp, jpeg, png, etc.
-    pub size: String, // sm, md, lg ...
+    pub size: String,   // sm, md, lg ...
     pub width: i32,
     pub height: i32,
     pub headers: String, // Cualquier otro metadato relevante
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DocumentRecipeModel {
+    pub name: String,
+    pub ocr_language: String,
+    pub category: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum Recipe {
+    Image(RecipeMediaModel),
+    Document(DocumentRecipeModel),
 }

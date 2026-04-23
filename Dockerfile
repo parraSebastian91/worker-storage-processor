@@ -20,16 +20,31 @@ FROM rust:1.88-slim AS builder
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    clang \
-    mold \
-    && rm -rf /var/lib/apt/lists/*
+ARG ENABLE_OCR=false
+
+# Nota: en Debian slim no hay `libpdfium-dev` oficial en muchos repos.
+# Si compilas con OCR, debes proveer libpdfium por otro medio (archivo .so/.dll en runtime).
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        pkg-config \
+        libssl-dev \
+        clang \
+        mold; \
+    if [ "$ENABLE_OCR" = "true" ]; then \
+        apt-get install -y --no-install-recommends \
+            tesseract-ocr \
+            tesseract-ocr-spa \
+            libtesseract-dev \
+            libleptonica-dev; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
 
 # Perfil de build: "dev-fast" para desarrollo, "release" para prod.
 # Por defecto usamos dev-fast (rebuilds rapidos, sin LTO).
 ARG BUILD_PROFILE=dev-fast
+ARG CARGO_FEATURES=""
 
 # RUSTFLAGS:
 # - mold: linker hasta 8x más rápido que el linker por defecto (gana mucho en Ryzen y M2)
@@ -46,7 +61,7 @@ COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src cmd/api && \
     echo "fn main() {}" > src/main.rs && \
     echo "fn main() {}" > cmd/api/main.rs && \
-    cargo build --profile ${BUILD_PROFILE} --bin worker-storage-processor 2>/dev/null || true && \
+    cargo build --profile ${BUILD_PROFILE} --bin worker-storage-processor ${CARGO_FEATURES} 2>/dev/null || true && \
     rm -rf src cmd
 
 # Copiar código fuente real
@@ -58,7 +73,7 @@ COPY cmd ./cmd
 RUN touch src/lib.rs cmd/api/main.rs 2>/dev/null || true
 
 # Compilar
-RUN cargo build --profile ${BUILD_PROFILE} --bin worker-storage-processor
+RUN cargo build --profile ${BUILD_PROFILE} --bin worker-storage-processor ${CARGO_FEATURES}
 
 # Determinar ruta del binario según perfil
 # dev-fast → target/dev-fast/  |  release → target/release/
@@ -71,10 +86,21 @@ FROM debian:bookworm-slim AS runtime
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+ARG ENABLE_OCR=false
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3; \
+    if [ "$ENABLE_OCR" = "true" ]; then \
+        apt-get install -y --no-install-recommends \
+            tesseract-ocr \
+            tesseract-ocr-spa \
+            libtesseract5 \
+            libleptonica-dev; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/worker-storage-processor ./
 

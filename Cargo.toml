@@ -7,6 +7,10 @@ edition = "2021"
 name = "worker-storage-processor"
 path = "cmd/api/main.rs"
 
+[features]
+default = []
+ocr = ["dep:pdfium-render", "dep:tesseract"]
+
 [dependencies]
 # Async Runtime
 tokio = { version = "1.40", features = ["full"] }
@@ -53,6 +57,10 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-r
 image = "0.25"
 fast_image_resize = "3.0"
 webp = "0.3"
+
+# OCR / PDF
+pdfium-render = { version = "0.8", optional = true }
+tesseract = { version = "0.15", optional = true }
 
 [profile.release]
 opt-level = 3

@@ -1,4 +1,5 @@
 use axum::{routing::get, Router};
+use worker_storage_processor::aplication::service::document_manager_Service::DocumentManagerService;
 use worker_storage_processor::aplication::service::event_manager_service::EventManagerService;
 use worker_storage_processor::aplication::service::image_manager_service::ImageManagerService;
 use worker_storage_processor::domain::ports::outbound::object_db_repository::IObjectDBRepository;
@@ -55,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
     // ========== Iniciador Serivicios de aplicacion ==========
 
     let _image_manager_service = Arc::new(ImageManagerService::new());
+    let _document_manager_service = Arc::new(DocumentManagerService::new());
 
     // =========== Inicializando Handler de la cola ===========
 
@@ -64,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
         _storage_clients.clone(),
         Arc::clone(&_database),
         Arc::clone(&_image_manager_service),
+        Arc::clone(&_document_manager_service),
     ));
 
     let event_manager = Arc::new(<EventManagerUseCase as IEventManagerUseCase>::new(

@@ -1,15 +1,15 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use crate::{
-    aplication::service::image_manager_service::ImageManagerService,
+    aplication::service::{
+        document_manager_Service::DocumentManagerService,
+        image_manager_service::ImageManagerService,
+    },
     domain::{
         errors::handler_error::HandlerError,
         models::{
-            media_status_enum::MediaStatus::Processing,
-            message_event_model::{PublishPayload, VariantMetadataModel, VariantModel},
-            constantes_model::{
-                CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER,
-            },
+            constantes_model::{CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER},
+            message_event_model::{PublishPayload, VariantMetadataModel, VariantModel, Recipe},
         },
         ports::outbound::{
             object_db_repository::IObjectDBRepository,
@@ -23,6 +23,7 @@ pub struct EventManagerService {
     object_storage: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
     object_repository: Arc<dyn IObjectDBRepository>,
     image_process_service: Arc<ImageManagerService>,
+    document_manager_service: Arc<DocumentManagerService>,
     // object_cache_repository: Arc<dyn IObjectCacheRepository>,
 }
 
@@ -32,29 +33,48 @@ impl EventManagerService {
         object_repository: Arc<dyn IObjectDBRepository>,
         // object_cache_repository: Arc<dyn IObjectCacheRepository>,
         image_process_service: Arc<ImageManagerService>,
+        document_manager_service: Arc<DocumentManagerService>,
     ) -> Self {
         Self {
             object_storage,
             object_repository,
             // object_cache_repository,
             image_process_service,
+            document_manager_service,
         }
     }
 
     pub async fn handle_image_process(&self, _payload: PublishPayload) -> Result<(), HandlerError> {
         let started_at = Instant::now();
         let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
+
+         // Extraer variante Image del enum
+        let recipe = match &_payload.recipe {
+            Some(Recipe::Image(r)) => r,
+            _ => {
+                error!(
+                    correlation_id = %correlation_id,
+                    asset_id = %_payload.event.asset_id,
+                    "Recipe inválida o ausente para procesamiento de imagen"
+                );
+                return Err(HandlerError::ProcessingError(
+                    "Se esperaba una receta de imagen".to_string(),
+                ));
+            }
+        };
+
         info!(
             correlation_id = %correlation_id,
             asset_id = %_payload.event.asset_id,
             media_type = %_payload.event.media_type,
             storage_key = %_payload.event.storage_key,
-            recipe_name = %_payload.recipe.name,
+            recipe_name = %recipe.name,
             "Inicio de procesamiento de imagen"
         );
-
-        if _payload.event.category_process != CATEGORY_PROCESS_USER_AVATAR || 
-           _payload.event.category_process != CATEGORY_PROCESS_USER_BANNER {
+    
+        if _payload.event.category_process != CATEGORY_PROCESS_USER_AVATAR
+            || _payload.event.category_process != CATEGORY_PROCESS_USER_BANNER
+        {
             info!(
                 correlation_id = %correlation_id,
                 asset_id = %_payload.event.asset_id,
@@ -65,7 +85,7 @@ impl EventManagerService {
             self.object_repository
                 .deprecate_old_assets(&_payload.event.owner_uuid, &_payload.event.category_process)
                 .await
-                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;            
+                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
         }
 
         let download_started_at = Instant::now();
@@ -83,7 +103,7 @@ impl EventManagerService {
         let process_started_at = Instant::now();
         let process_result = self
             .image_process_service
-            .process(&object, &_payload.recipe)
+            .process(&object, recipe)
             .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
         info!(
             correlation_id = %correlation_id,
@@ -128,7 +148,7 @@ impl EventManagerService {
                 size: media.size,
                 width: media.width,
                 height: media.height,
-                headers: "Cache-Control: public, max-age=31536000".to_string()
+                headers: "Cache-Control: public, max-age=31536000".to_string(),
             };
 
             let media_variant = VariantModel {
@@ -163,10 +183,94 @@ impl EventManagerService {
     pub async fn handle_video_process(&self, _payload: PublishPayload) -> Result<(), HandlerError> {
         info!("Manejando mensaje de video con EventManagerService...");
         info!("Payload recibido: {:?}", _payload);
-        self.object_repository
-            .update_state(&_payload.event.asset_id, Processing)
+        Ok(())
+    }
+
+    pub async fn handle_document_dte_process(
+        &self,
+        _payload: PublishPayload,
+    ) -> Result<(), HandlerError> {
+        let started_at = Instant::now();
+        let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
+
+        // Extraer variante Document del enum
+        let recipe = match &_payload.recipe {
+            Some(Recipe::Document(r)) => r,
+            _ => {
+                error!(
+                    correlation_id = %correlation_id,
+                    asset_id = %_payload.event.asset_id,
+                    "Recipe inválida o ausente para procesamiento de documento"
+                );
+                return Err(HandlerError::ProcessingError(
+                    "Se esperaba una receta de documento".to_string(),
+                ));
+            }
+        };
+
+        info!(
+            correlation_id = %correlation_id,
+            asset_id = %_payload.event.asset_id,
+            storage_key = %_payload.event.storage_key,
+            "Inicio de procesamiento de documento"
+        );
+
+        let document_bytes = self
+            .download_object_temp("", &_payload.event.storage_key)
+            .await;
+        if document_bytes.is_empty() {
+            return Err(HandlerError::RepositoryError(
+                "No fue posible descargar el documento temporal para OCR".to_string(),
+            ));
+        }
+
+        let language = if recipe.ocr_language.is_empty() {
+                std::env::var("OCR_TESSERACT_LANG").unwrap_or_else(|_| "spa+eng".to_string())
+            } else {
+                recipe.ocr_language.clone()
+            };
+
+        let ocr_text = self
+            .document_manager_service
+            .extract_text_from_pdf(&document_bytes, &language)
+            .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
+
+        let text_key = format!(
+            "public/documents/{}/{}/{}-ocr.txt",
+            _payload.event.owner_uuid, _payload.event.category_process, _payload.event.name_file
+        );
+
+        self.upload_object_final("", &text_key, ocr_text.into_bytes())
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+
+        let metadata = VariantMetadataModel {
+            format: "txt".to_string(),
+            size: "ocr".to_string(),
+            width: 0,
+            height: 0,
+            headers: "Content-Type: text/plain; charset=utf-8".to_string(),
+        };
+
+        let media_variant = VariantModel {
+            asset_id: _payload.event.asset_id.clone(),
+            name: format!("{}-ocr", _payload.event.name_file),
+            metadata,
+            url_path: text_key.clone(),
+        };
+
+        self.object_repository
+            .create_variant(media_variant.into())
+            .await
+            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+
+        info!(
+            correlation_id = %correlation_id,
+            asset_id = %_payload.event.asset_id,
+            text_key = %text_key,
+            elapsed_ms = started_at.elapsed().as_millis(),
+            "Procesamiento OCR de documento completado"
+        );
 
         Ok(())
     }
@@ -174,11 +278,6 @@ impl EventManagerService {
     pub async fn handle_other_process(&self, _payload: PublishPayload) -> Result<(), HandlerError> {
         info!("Manejando mensaje de otro tipo con EventManagerService...");
         info!("Payload recibido: {:?}", _payload);
-        self.object_repository
-            .update_state(&_payload.event.asset_id, Processing)
-            .await
-            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
-
         Ok(())
     }
 

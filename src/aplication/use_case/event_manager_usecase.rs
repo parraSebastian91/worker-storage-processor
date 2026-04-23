@@ -5,9 +5,7 @@ use crate::{
     domain::{
         errors::handler_error::HandlerError,
         models::{
-            media_status_enum::MediaStatus::{Processing, Ready},
-            message_event_model::PublishPayload,
-            MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO,
+            MEDIA_TYPE_DOCUMENT, MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, media_status_enum::MediaStatus::{Processing, Ready}, message_event_model::PublishPayload
         },
         ports::{
             inbound::event_manager_usecase::IEventManagerUseCase,
@@ -82,6 +80,11 @@ impl IEventManagerUseCase for EventManagerUseCase {
             MEDIA_TYPE_VIDEO => {
                 self.event_manager_service
                     .handle_video_process(_payload.clone())
+                    .await?
+            }
+            MEDIA_TYPE_DOCUMENT => {
+                self.event_manager_service
+                    .handle_document_dte_process(_payload.clone())
                     .await?
             }
             _ => {
