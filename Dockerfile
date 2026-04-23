@@ -20,7 +20,7 @@ FROM rust:1.88-slim AS builder
 
 WORKDIR /app
 
-ARG ENABLE_OCR=false
+ARG ENABLE_OCR=true
 
 # Nota: en Debian slim no hay `libpdfium-dev` oficial en muchos repos.
 # Si compilas con OCR, debes proveer libpdfium por otro medio (archivo .so/.dll en runtime).
