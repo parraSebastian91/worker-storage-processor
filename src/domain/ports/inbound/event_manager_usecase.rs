@@ -4,8 +4,7 @@ use crate::{
         errors::handler_error::HandlerError,
         models::message_event_model::PublishPayload,
         ports::outbound::{
-            object_db_repository::IObjectDBRepository,
-            object_storage_repository::IObjectStorageRepository,
+            external_service::IExternalService, object_db_repository::IObjectDBRepository, object_storage_repository::IObjectStorageRepository
         },
     },
 };
@@ -20,7 +19,7 @@ pub trait IEventManagerUseCase: Send + Sync {
         >,
         object_repository: std::sync::Arc<dyn IObjectDBRepository>,
         event_manager_service: std::sync::Arc<EventManagerService>,
-        // object_cache_repository: std::sync::Arc<dyn crate::domain::ports::outbound::object_cache_repository::IObjectCacheRepository>,
+        external_services: std::sync::Arc<dyn IExternalService + Send + Sync>,
     ) -> Self
     where
         Self: Sized;

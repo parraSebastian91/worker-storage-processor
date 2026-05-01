@@ -87,18 +87,34 @@ FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 
 ARG ENABLE_OCR=false
+ARG TARGETARCH
+ARG PDFIUM_VERSION=7543
 
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         ca-certificates \
-        libssl3; \
+        libssl3 \
+        curl \
+        tar; \
     if [ "$ENABLE_OCR" = "true" ]; then \
         apt-get install -y --no-install-recommends \
             tesseract-ocr \
             tesseract-ocr-spa \
             libtesseract5 \
             libleptonica-dev; \
+        case "${TARGETARCH}" in \
+            amd64) PDFIUM_ARCH="linux-x64" ;; \
+            arm64) PDFIUM_ARCH="linux-arm64" ;; \
+            *) echo "Unsupported TARGETARCH: ${TARGETARCH}"; exit 1 ;; \
+        esac; \
+        PDFIUM_URL="https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_VERSION}/pdfium-${PDFIUM_ARCH}.tgz"; \
+        curl -fL "${PDFIUM_URL}" -o /tmp/pdfium.tgz; \
+        mkdir -p /tmp/pdfium; \
+        tar -xzf /tmp/pdfium.tgz -C /tmp/pdfium; \
+        cp /tmp/pdfium/lib/libpdfium.so /usr/lib/libpdfium.so; \
+        chmod 755 /usr/lib/libpdfium.so; \
+        rm -rf /tmp/pdfium /tmp/pdfium.tgz; \
     fi; \
     rm -rf /var/lib/apt/lists/*
 

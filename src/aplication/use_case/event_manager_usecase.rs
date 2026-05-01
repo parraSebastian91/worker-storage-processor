@@ -5,13 +5,12 @@ use crate::{
     domain::{
         errors::handler_error::HandlerError,
         models::{
-            MEDIA_TYPE_DOCUMENT, MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, media_status_enum::MediaStatus::{Processing, Ready}, message_event_model::PublishPayload
+            MEDIA_TYPE_DOCUMENT, MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, STATE_PROCESS_READY, media_status_enum::MediaStatus::{Processing, Ready}, message_event_model::PublishPayload
         },
         ports::{
             inbound::event_manager_usecase::IEventManagerUseCase,
             outbound::{
-                object_db_repository::IObjectDBRepository,
-                object_storage_repository::IObjectStorageRepository,
+                external_service::IExternalService, object_db_repository::IObjectDBRepository, object_storage_repository::IObjectStorageRepository
             },
         },
     },
@@ -23,6 +22,7 @@ pub struct EventManagerUseCase {
     object_storaje: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
     object_repository: Arc<dyn IObjectDBRepository>,
     event_manager_service: Arc<EventManagerService>,
+    external_services: Arc<dyn IExternalService + Send + Sync>,
     // object_cache_repository: Arc<dyn IObjectCacheRepository>,
 }
 
@@ -32,12 +32,14 @@ impl IEventManagerUseCase for EventManagerUseCase {
         object_storaje: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
         object_repository: Arc<dyn IObjectDBRepository>,
         event_manager_service: Arc<EventManagerService>,
+        external_services: Arc<dyn IExternalService + Send + Sync>,
         // object_cache_repository: Arc<dyn IObjectCacheRepository>,
     ) -> Self {
         Self {
             object_storaje,
             object_repository,
             event_manager_service,
+            external_services,
             // object_cache_repository,
         }
     }
@@ -83,9 +85,10 @@ impl IEventManagerUseCase for EventManagerUseCase {
                     .await?
             }
             MEDIA_TYPE_DOCUMENT => {
-                self.event_manager_service
+                let factura_procesada = self.event_manager_service
                     .handle_document_dte_process(_payload.clone())
-                    .await?
+                    .await?;
+                self.external_services.notify_object_processed(factura_procesada, &_payload.event.category_process, STATE_PROCESS_READY).await;
             }
             _ => {
                 warn!(

@@ -1,5 +1,5 @@
 use axum::{routing::get, Router};
-use worker_storage_processor::aplication::service::document_manager_Service::DocumentManagerService;
+use worker_storage_processor::aplication::service::document_manager_service::DocumentManagerService;
 use worker_storage_processor::aplication::service::event_manager_service::EventManagerService;
 use worker_storage_processor::aplication::service::image_manager_service::ImageManagerService;
 use worker_storage_processor::domain::ports::outbound::object_db_repository::IObjectDBRepository;
@@ -20,6 +20,7 @@ use worker_storage_processor::infraestructure::adapter::inbound::queue::rabbitmq
 use worker_storage_processor::infraestructure::adapter::outbound::db::cache::cache_client::RedisCacheImpl;
 use worker_storage_processor::infraestructure::adapter::outbound::db::postgres::postgres_client::PostgresClient;
 use worker_storage_processor::infraestructure::adapter::outbound::storage::minio::minio_client::MinioClientAdapter;
+use worker_storage_processor::infraestructure::adapter::outbound::external_services::external_services::ExternalServicesImpl;
 use worker_storage_processor::infraestructure::{
     config::app_config::AppConfig, observability::logger::logger::init_logger,
 };
@@ -52,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
     let _database = init_database_client(&config).await?;
     let _cache_client = init_cache_client(&config).await?;
     let _queue_client = init_queue_client(&config).await?;
+    let _external_services = Arc::new(ExternalServicesImpl::new(config.configuracion_gral.clone()));
 
     // ========== Iniciador Serivicios de aplicacion ==========
 
@@ -73,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         _storage_clients,
         _database,
         event_manager_service,
+        _external_services,
     ));
     let handler: QueueHandler = QueueHandler::new(_queue_client, event_manager);
 

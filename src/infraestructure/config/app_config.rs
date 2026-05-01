@@ -19,6 +19,7 @@ pub struct AppConfig {
 pub struct ConfiguracionGral {
     pub port: String,
     pub app_name: String,
+    pub external_orchestrator_url: Option<String>,
 }
 #[derive(Debug, Clone, Deserialize)]
 pub struct QueueConfig {
@@ -81,6 +82,7 @@ impl AppConfig {
             port: env::var("PORT").unwrap_or_else(|_| "8080".to_string()),
             app_name: env::var("APP_NAME")
                 .unwrap_or_else(|_| "worker-storage-processor".to_string()),
+            external_orchestrator_url: env::var("EXTERNAL_ORCHESTRATOR_URL").ok(),
         };
 
         let queue_config = QueueConfig {

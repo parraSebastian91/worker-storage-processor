@@ -2,14 +2,15 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use crate::{
     aplication::service::{
-        document_manager_Service::DocumentManagerService,
+        document_manager_service::DocumentManagerService,
         image_manager_service::ImageManagerService,
     },
     domain::{
         errors::handler_error::HandlerError,
         models::{
             constantes_model::{CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER},
-            message_event_model::{PublishPayload, VariantMetadataModel, VariantModel, Recipe},
+            factura_data_model::InvoiceData,
+            message_event_model::{PublishPayload, Recipe, VariantMetadataModel, VariantModel},
         },
         ports::outbound::{
             object_db_repository::IObjectDBRepository,
@@ -18,7 +19,7 @@ use crate::{
     },
 };
 use regex::Regex;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 pub struct EventManagerService {
     object_storage: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
     object_repository: Arc<dyn IObjectDBRepository>,
@@ -48,7 +49,7 @@ impl EventManagerService {
         let started_at = Instant::now();
         let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
 
-         // Extraer variante Image del enum
+        // Extraer variante Image del enum
         let recipe = match &_payload.recipe {
             Some(Recipe::Image(r)) => r,
             _ => {
@@ -71,7 +72,7 @@ impl EventManagerService {
             recipe_name = %recipe.name,
             "Inicio de procesamiento de imagen"
         );
-    
+
         if _payload.event.category_process != CATEGORY_PROCESS_USER_AVATAR
             || _payload.event.category_process != CATEGORY_PROCESS_USER_BANNER
         {
@@ -189,7 +190,7 @@ impl EventManagerService {
     pub async fn handle_document_dte_process(
         &self,
         _payload: PublishPayload,
-    ) -> Result<(), HandlerError> {
+    ) -> Result<InvoiceData, HandlerError> {
         let started_at = Instant::now();
         let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
 
@@ -225,22 +226,34 @@ impl EventManagerService {
         }
 
         let language = if recipe.ocr_language.is_empty() {
-                std::env::var("OCR_TESSERACT_LANG").unwrap_or_else(|_| "spa+eng".to_string())
-            } else {
-                recipe.ocr_language.clone()
-            };
+            std::env::var("OCR_TESSERACT_LANG").unwrap_or_else(|_| "spa+eng".to_string())
+        } else {
+            recipe.ocr_language.clone()
+        };
 
-        let ocr_text = self
+        // Extraer datos estructurados de la factura
+        let invoice_data = self
             .document_manager_service
-            .extract_text_from_pdf(&document_bytes, &language)
+            .extract_invoice_data_from_pdf(&document_bytes, &language)
             .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
 
+        debug!(
+            correlation_id = %correlation_id,
+            numero_factura = ?invoice_data.numero_factura,
+            rut_deudor = ?invoice_data.rut_deudor,
+            nombre_deudor = ?invoice_data.nombre_deudor,
+            monto_total = ?invoice_data.monto_total,
+            "Datos de factura extraídos exitosamente"
+        );
+
+        // Guardar texto completo de OCR
         let text_key = format!(
             "public/documents/{}/{}/{}-ocr.txt",
             _payload.event.owner_uuid, _payload.event.category_process, _payload.event.name_file
         );
 
-        self.upload_object_final("", &text_key, ocr_text.into_bytes())
+        let full_text_bytes = invoice_data.full_text.join("\n").into_bytes();
+        self.upload_object_final("", &text_key, full_text_bytes)
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
@@ -264,6 +277,45 @@ impl EventManagerService {
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
+        // Guardar datos extraídos en JSON
+        let invoice_json = serde_json::json!({
+            "numero_factura": &invoice_data.numero_factura,
+            "rut_deudor": &invoice_data.rut_deudor,
+            "nombre_deudor": &invoice_data.nombre_deudor,
+            "monto_total": &invoice_data.monto_total,
+            "extraction_timestamp": chrono::Utc::now().to_rfc3339(),
+            "total_lines_processed": invoice_data.full_text.len(),
+        });
+
+        let json_key = format!(
+            "public/documents/{}/{}/{}-ocr.json",
+            _payload.event.owner_uuid, _payload.event.category_process, _payload.event.name_file
+        );
+
+        self.upload_object_final("", &json_key, invoice_json.to_string().into_bytes())
+            .await
+            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+
+        let json_metadata = VariantMetadataModel {
+            format: "json".to_string(),
+            size: "ocr-data".to_string(),
+            width: 0,
+            height: 0,
+            headers: "Content-Type: application/json; charset=utf-8".to_string(),
+        };
+
+        let json_variant = VariantModel {
+            asset_id: _payload.event.asset_id.clone(),
+            name: format!("{}-ocr-data", _payload.event.name_file),
+            metadata: json_metadata,
+            url_path: json_key.clone(),
+        };
+
+        self.object_repository
+            .create_variant(json_variant.into())
+            .await
+            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+
         info!(
             correlation_id = %correlation_id,
             asset_id = %_payload.event.asset_id,
@@ -272,7 +324,7 @@ impl EventManagerService {
             "Procesamiento OCR de documento completado"
         );
 
-        Ok(())
+        Ok(invoice_data)
     }
 
     pub async fn handle_other_process(&self, _payload: PublishPayload) -> Result<(), HandlerError> {

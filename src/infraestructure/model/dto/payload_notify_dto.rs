@@ -1,0 +1,14 @@
+use serde::{Deserialize, Serialize};
+
+use crate::domain::models::factura_data_model::InvoiceData;
+
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]                
+pub struct PayloadNotifyDTO {
+    pub category: String,
+    pub status: String,
+    pub timestamp: String,
+    pub app: String,
+    pub payload: InvoiceData,
+}                
