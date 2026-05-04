@@ -285,7 +285,7 @@ impl DocumentManagerService {
                 rut_deudor,
                 nombre_deudor,
                 monto_total,
-                full_text: _,
+                full_text: vec![],
             })
         }
     }
