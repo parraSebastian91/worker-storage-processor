@@ -42,7 +42,7 @@ impl IExternalService for ExternalServicesImpl {
             match self
                 .http_client
                 .put(format!("{}/webhooks/notify", webhook_url))
-                .json(&serde_json::to_string(&payload).unwrap())
+                .json(&payload)
                 .send()
                 .await
             {
