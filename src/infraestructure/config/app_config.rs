@@ -1,4 +1,3 @@
-
 use dotenvy::dotenv;
 use serde::Deserialize;
 use std::{env, sync::Arc};
@@ -51,9 +50,18 @@ pub struct CacheConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+
+pub struct StorageBucketConfig {
+    pub public_original: String,
+    pub private_original: String,
+    pub public_processed: String,
+    pub private_processed: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct MinioConfig {
     pub url_base: String,
-    pub bucket: String,
+    pub buckets: StorageBucketConfig,
     pub access_key: String,
     pub secret_key: String,
     pub is_principal: bool,
@@ -86,12 +94,16 @@ impl AppConfig {
         };
 
         let queue_config = QueueConfig {
-            url: env::var("QUEUE_URL").map_err(|_| ConfigError::MissingEnvVar("QUEUE_URL is not set".to_string()))?,
-            queue: env::var("QUEUE_NAME").map_err(|_| ConfigError::MissingEnvVar("QUEUE_NAME is not set".to_string()))?,
+            url: env::var("QUEUE_URL")
+                .map_err(|_| ConfigError::MissingEnvVar("QUEUE_URL is not set".to_string()))?,
+            queue: env::var("QUEUE_NAME")
+                .map_err(|_| ConfigError::MissingEnvVar("QUEUE_NAME is not set".to_string()))?,
             prefetch_count: env::var("QUEUE_PREFETCH_COUNT")
                 .unwrap_or_else(|_| "10".to_string())
                 .parse()
-                .map_err(|_| ConfigError::MissingEnvVar("Invalid QUEUE_PREFETCH_COUNT".to_string()))?,
+                .map_err(|_| {
+                    ConfigError::MissingEnvVar("Invalid QUEUE_PREFETCH_COUNT".to_string())
+                })?,
             exchange: env::var("QUEUE_EXCHANGE")
                 .or_else(|_| env::var("QUEUE_EXCHANGE_NAME"))
                 .unwrap_or_else(|_| "".to_string()),
@@ -103,36 +115,64 @@ impl AppConfig {
         };
 
         let db_config = DbConfig {
-            host: env::var("DB_HOST").map_err(|_| ConfigError::MissingEnvVar("DB_HOST is not set".to_string()))?,
+            host: env::var("DB_HOST")
+                .map_err(|_| ConfigError::MissingEnvVar("DB_HOST is not set".to_string()))?,
             port: env::var("DB_PORT")
                 .unwrap_or_else(|_| "5432".to_string())
                 .parse()
                 .map_err(|_| ConfigError::MissingEnvVar("Invalid DB_PORT".to_string()))?,
-            user: env::var("DB_USER").map_err(|_| ConfigError::MissingEnvVar("DB_USER is not set".to_string()))?,
-            password: env::var("DB_PASSWORD").map_err(|_| ConfigError::MissingEnvVar("DB_PASSWORD is not set".to_string()))?,
-            database: env::var("DB_NAME").map_err(|_| ConfigError::MissingEnvVar("DB_NAME is not set".to_string()))?,
+            user: env::var("DB_USER")
+                .map_err(|_| ConfigError::MissingEnvVar("DB_USER is not set".to_string()))?,
+            password: env::var("DB_PASSWORD")
+                .map_err(|_| ConfigError::MissingEnvVar("DB_PASSWORD is not set".to_string()))?,
+            database: env::var("DB_NAME")
+                .map_err(|_| ConfigError::MissingEnvVar("DB_NAME is not set".to_string()))?,
             max_connections: env::var("DB_MAX_CONNECTIONS")
                 .unwrap_or_else(|_| "10".to_string())
                 .parse()
-                .map_err(|_| ConfigError::MissingEnvVar("Invalid DB_MAX_CONNECTIONS".to_string()))?,
+                .map_err(|_| {
+                    ConfigError::MissingEnvVar("Invalid DB_MAX_CONNECTIONS".to_string())
+                })?,
+        };
+
+        let bucket_config = StorageBucketConfig {
+            public_original: env::var("STORAGE_BUCKET_PUBLIC_ORIGINAL").map_err(|_| {
+                ConfigError::MissingEnvVar("STORAGE_BUCKET_PUBLIC_ORIGINAL is not set".to_string())
+            })?,
+            private_original: env::var("STORAGE_BUCKET_PRIVATE_ORIGINAL").map_err(|_| {
+                ConfigError::MissingEnvVar("STORAGE_BUCKET_PRIVATE_ORIGINAL is not set".to_string())
+            })?,
+            public_processed: env::var("STORAGE_BUCKET_PUBLIC_PROCESSED").map_err(|_| {
+                ConfigError::MissingEnvVar("STORAGE_BUCKET_PUBLIC_PROCESSED is not set".to_string())
+            })?,
+            private_processed: env::var("STORAGE_BUCKET_PRIVATE_PROCESSED").map_err(|_| {
+                ConfigError::MissingEnvVar(
+                    "STORAGE_BUCKET_PRIVATE_PROCESSED is not set".to_string(),
+                )
+            })?,
         };
 
         let minio_config = MinioConfig {
             url_base: env::var("MINIO_URL_BASE")
                 .map_err(|_| ConfigError::MissingEnvVar("MINIO_URL_BASE is not set".to_string()))?,
-            bucket: env::var("MINIO_BUCKET").map_err(|_| ConfigError::MissingEnvVar("MINIO_BUCKET is not set".to_string()))?,
-            access_key: env::var("MINIO_ACCESS_KEY")
-                .map_err(|_| ConfigError::MissingEnvVar("MINIO_ACCESS_KEY is not set".to_string()))?,
-            secret_key: env::var("MINIO_SECRET_KEY")
-                .map_err(|_| ConfigError::MissingEnvVar("MINIO_SECRET_KEY is not set".to_string()))?,
+            buckets: bucket_config,
+            access_key: env::var("MINIO_ACCESS_KEY").map_err(|_| {
+                ConfigError::MissingEnvVar("MINIO_ACCESS_KEY is not set".to_string())
+            })?,
+            secret_key: env::var("MINIO_SECRET_KEY").map_err(|_| {
+                ConfigError::MissingEnvVar("MINIO_SECRET_KEY is not set".to_string())
+            })?,
             is_principal: env::var("MINIO_IS_PRINCIPAL")
                 .unwrap_or_else(|_| "false".to_string())
                 .parse()
-                .map_err(|_| ConfigError::MissingEnvVar("Invalid MINIO_IS_PRINCIPAL".to_string()))?,
+                .map_err(|_| {
+                    ConfigError::MissingEnvVar("Invalid MINIO_IS_PRINCIPAL".to_string())
+                })?,
         };
 
         let cache_config = CacheConfig {
-            host: env::var("CACHE_HOST").map_err(|_| ConfigError::MissingEnvVar("CACHE_HOST is not set".to_string()))?,
+            host: env::var("CACHE_HOST")
+                .map_err(|_| ConfigError::MissingEnvVar("CACHE_HOST is not set".to_string()))?,
             password: env::var("CACHE_PASSWORD")
                 .map_err(|_| ConfigError::MissingEnvVar("CACHE_PASSWORD is not set".to_string()))?,
             port: env::var("CACHE_PORT")
@@ -150,7 +190,7 @@ impl AppConfig {
         };
 
         let observability = ObservabilityConfig {
-            log_level: env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+            log_level: env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
             log_format: env::var("LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string()),
             enable_metrics: env::var("ENABLE_METRICS")
                 .unwrap_or_else(|_| "true".to_string())

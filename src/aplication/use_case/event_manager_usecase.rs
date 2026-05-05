@@ -5,12 +5,15 @@ use crate::{
     domain::{
         errors::handler_error::HandlerError,
         models::{
-            MEDIA_TYPE_DOCUMENT, MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, STATE_PROCESS_READY, media_status_enum::MediaStatus::{Processing, Ready}, message_event_model::PublishPayload
+            media_status_enum::MediaStatus::{Processing, Ready},
+            message_event_model::PublishPayload,
+            MEDIA_TYPE_DOCUMENT, MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, STATE_PROCESS_READY,
         },
         ports::{
             inbound::event_manager_usecase::IEventManagerUseCase,
             outbound::{
-                external_service::IExternalService, object_db_repository::IObjectDBRepository, object_storage_repository::IObjectStorageRepository
+                external_service::IExternalService, object_db_repository::IObjectDBRepository,
+                object_storage_repository::IObjectStorageRepository,
             },
         },
     },
@@ -74,21 +77,28 @@ impl IEventManagerUseCase for EventManagerUseCase {
         let _result_process = match _payload.event.media_type.as_str() {
             MEDIA_TYPE_IMAGE => {
                 self.event_manager_service
-                    .handle_image_process(_payload.clone())
+                    .handle_image_process(_payload.clone(), true)
                     .await?
             }
             // Aquí podrías agregar más casos para otros tipos de medios, por ejemplo:
             // "video" => self.handle_video_process(_payload).await?,
             MEDIA_TYPE_VIDEO => {
                 self.event_manager_service
-                    .handle_video_process(_payload.clone())
+                    .handle_video_process(_payload.clone(), false)
                     .await?
             }
             MEDIA_TYPE_DOCUMENT => {
-                let factura_procesada = self.event_manager_service
-                    .handle_document_dte_process(_payload.clone())
+                let factura_procesada = self
+                    .event_manager_service
+                    .handle_document_dte_process(_payload.clone(), true)
                     .await?;
-                self.external_services.notify_object_processed(factura_procesada, &_payload.event.category_process, STATE_PROCESS_READY).await;
+                self.external_services
+                    .notify_object_processed(
+                        factura_procesada,
+                        &_payload.event.category_process,
+                        STATE_PROCESS_READY,
+                    )
+                    .await;
             }
             _ => {
                 warn!(
@@ -130,11 +140,7 @@ impl IEventManagerUseCase for EventManagerUseCase {
             .unwrap_or_else(|| _payload.event.storage_key.clone());
 
         self.object_repository
-            .update_state_and_key_storage(
-                &_payload.event.asset_id,
-                &storage_key_final,
-                Ready,
-            )
+            .update_state_and_key_storage(&_payload.event.asset_id, &storage_key_final, Ready)
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
         info!(

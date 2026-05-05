@@ -109,7 +109,7 @@ async fn init_storage_client(
     let minio_config = &config.minio_config;
     let minio_client = MinioClientAdapter::new(
         minio_config.url_base.clone(),
-        minio_config.bucket.clone(),
+        minio_config.buckets.clone(),
         minio_config.access_key.clone(),
         minio_config.secret_key.clone(),
         minio_config.is_principal,

@@ -5,18 +5,19 @@ use minio::s3::http::BaseUrl;
 use tracing::info;
 
 use crate::domain::errors::storage_error::RepositoryError;
+use crate::infraestructure::config::app_config::StorageBucketConfig;
 
 pub struct MinioClientAdapter {
     client: Client,
     url_base: String,
-    bucket: String,
+    bucket: StorageBucketConfig,
     is_principal: bool,
 }
 
 impl MinioClientAdapter{
     pub async fn new(
         url_base: String,
-        bucket: String,
+        bucket: StorageBucketConfig,
         access_key: String,
         secret_key: String,
         is_principal: bool,
@@ -64,7 +65,7 @@ impl MinioClientAdapter{
         &self.url_base
     }
 
-    pub fn bucket(&self) -> &str {
+    pub fn bucket(&self) -> &StorageBucketConfig {
         &self.bucket
     }
 

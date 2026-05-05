@@ -45,7 +45,7 @@ impl EventManagerService {
         }
     }
 
-    pub async fn handle_image_process(&self, _payload: PublishPayload) -> Result<(), HandlerError> {
+    pub async fn handle_image_process(&self, _payload: PublishPayload, _private: bool) -> Result<(), HandlerError> {
         let started_at = Instant::now();
         let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
 
@@ -91,7 +91,7 @@ impl EventManagerService {
 
         let download_started_at = Instant::now();
         let object = self
-            .download_object_temp("", &_payload.event.storage_key)
+            .download_object_temp("", &_payload.event.storage_key, _private)
             .await;
         info!(
             correlation_id = %correlation_id,
@@ -126,7 +126,7 @@ impl EventManagerService {
                 "Variante procesada"
             );
             let key_object = format!(
-                "public/profile-pictures/{}/{}/{}-{}.{}",
+                "profile-pictures/{}/{}/{}-{}.{}",
                 _payload.event.owner_uuid,
                 _payload.event.category_process,
                 _payload.event.name_file,
@@ -134,7 +134,7 @@ impl EventManagerService {
                 media.format
             );
 
-            self.upload_object_final("", &key_object as &str, media.bytes.clone())
+            self.upload_object_final("", &key_object as &str, media.bytes.clone(), false)
                 .await
                 .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
             info!(
@@ -181,7 +181,7 @@ impl EventManagerService {
         Ok(())
     }
 
-    pub async fn handle_video_process(&self, _payload: PublishPayload) -> Result<(), HandlerError> {
+    pub async fn handle_video_process(&self, _payload: PublishPayload, _private: bool) -> Result<(), HandlerError> {
         info!("Manejando mensaje de video con EventManagerService...");
         info!("Payload recibido: {:?}", _payload);
         Ok(())
@@ -190,6 +190,7 @@ impl EventManagerService {
     pub async fn handle_document_dte_process(
         &self,
         _payload: PublishPayload,
+        private: bool,
     ) -> Result<InvoiceData, HandlerError> {
         let started_at = Instant::now();
         let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
@@ -217,7 +218,7 @@ impl EventManagerService {
         );
 
         let document_bytes = self
-            .download_object_temp("", &_payload.event.storage_key)
+            .download_object_temp("", &_payload.event.storage_key, private)
             .await;
         if document_bytes.is_empty() {
             return Err(HandlerError::RepositoryError(
@@ -253,7 +254,7 @@ impl EventManagerService {
         );
 
         let full_text_bytes = invoice_data.full_text.join("\n").into_bytes();
-        self.upload_object_final("", &text_key, full_text_bytes)
+        self.upload_object_final("", &text_key, full_text_bytes, private)
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
@@ -292,7 +293,7 @@ impl EventManagerService {
             _payload.event.owner_uuid, _payload.event.category_process, _payload.event.name_file
         );
 
-        self.upload_object_final("", &json_key, invoice_json.to_string().into_bytes())
+        self.upload_object_final("", &json_key, invoice_json.to_string().into_bytes(), private)
             .await
             .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
@@ -333,7 +334,7 @@ impl EventManagerService {
         Ok(())
     }
 
-    async fn download_object_temp(&self, _bucket: &str, _key: &str) -> Vec<u8> {
+    async fn download_object_temp(&self, _bucket: &str, _key: &str, private: bool) -> Vec<u8> {
         let total_providers = self.object_storage.len();
         for (index, service_storage) in self.object_storage.values().enumerate() {
             info!(
@@ -343,7 +344,7 @@ impl EventManagerService {
                 object_key = _key,
                 "Intentando descargar objeto temporal"
             );
-            match service_storage.download_file(_bucket, _key).await {
+            match service_storage.download_file(_bucket, _key, private).await {
                 Ok(data) => {
                     info!(
                         bucket = _bucket,
@@ -380,6 +381,7 @@ impl EventManagerService {
         _bucket: &str,
         _key: &str,
         _data: Vec<u8>,
+        private: bool,
     ) -> Result<(), HandlerError> {
         let spaces_regex = Regex::new(r"\s+")
             .map_err(|e| HandlerError::RepositoryError(format!("Regex inválida: {}", e)))?;
@@ -395,7 +397,7 @@ impl EventManagerService {
                 "Intentando subir variante final"
             );
             match service_storage
-                .upload_file(_bucket, &key_no_spaces, _data.clone())
+                .upload_file(_bucket, &key_no_spaces, _data.clone(), private)
                 .await
             {
                 Ok(_) => {
@@ -439,7 +441,7 @@ impl EventManagerService {
                 object_key = _key,
                 "Intentando eliminar objeto temporal"
             );
-            match service_storage.delete_file(_bucket, _key).await {
+            match service_storage.delete_file(_bucket, _key, true).await {
                 Ok(_) => {
                     info!(
                         bucket = _bucket,
