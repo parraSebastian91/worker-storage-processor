@@ -9,5 +9,6 @@ pub trait IExternalService {
         factura: InvoiceData,
         category: &str,
         status: &str,
+        correlation_id: &str,
     ) -> String;
 }

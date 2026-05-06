@@ -29,6 +29,7 @@ impl IExternalService for ExternalServicesImpl {
         factura: InvoiceData,
         category: &str,
         status: &str,
+        correlation_id: &str,
     ) -> String {
         if let Some(webhook_url) = &self.general_config.external_orchestrator_url {
             let payload = PayloadNotifyDTO {
@@ -36,6 +37,7 @@ impl IExternalService for ExternalServicesImpl {
                 status: status.to_string(),
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 app: self.general_config.app_name.clone(),
+                correlation_id: correlation_id.to_string(),
                 payload: factura.clone(),
             };
 

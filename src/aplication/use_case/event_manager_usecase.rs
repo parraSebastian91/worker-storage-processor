@@ -97,6 +97,7 @@ impl IEventManagerUseCase for EventManagerUseCase {
                         factura_procesada,
                         &_payload.event.category_process,
                         STATE_PROCESS_READY,
+                        correlation_id,
                     )
                     .await;
             }
