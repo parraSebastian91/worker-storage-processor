@@ -11,5 +11,6 @@ pub struct PayloadNotifyDTO {
     pub timestamp: String,
     pub app: String,
     pub correlation_id: String,
+    pub owner_uuid: String,
     pub payload: InvoiceData,
 }                

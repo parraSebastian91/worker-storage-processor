@@ -98,6 +98,7 @@ impl IEventManagerUseCase for EventManagerUseCase {
                         &_payload.event.category_process,
                         STATE_PROCESS_READY,
                         correlation_id,
+                        &_payload.event.owner_uuid,
                     )
                     .await;
             }

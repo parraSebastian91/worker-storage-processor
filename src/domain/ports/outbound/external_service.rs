@@ -10,5 +10,6 @@ pub trait IExternalService {
         category: &str,
         status: &str,
         correlation_id: &str,
+        owner_uuid: &str,
     ) -> String;
 }
