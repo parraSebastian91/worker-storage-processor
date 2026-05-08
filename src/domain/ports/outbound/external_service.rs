@@ -11,5 +11,6 @@ pub trait IExternalService {
         status: &str,
         correlation_id: &str,
         owner_uuid: &str,
+        gestor: &str,
     ) -> String;
 }

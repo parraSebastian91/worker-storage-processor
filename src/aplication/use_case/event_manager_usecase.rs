@@ -58,6 +58,7 @@ impl IEventManagerUseCase for EventManagerUseCase {
             asset_id = %_payload.event.asset_id,
             media_type = %_payload.event.media_type,
             owner_uuid = %_payload.event.owner_uuid,
+            gestor = %_payload.event.gestor,
             storage_key = %_payload.event.storage_key,
             "Inicio de manejo de mensaje"
         );
@@ -99,6 +100,7 @@ impl IEventManagerUseCase for EventManagerUseCase {
                         STATE_PROCESS_READY,
                         correlation_id,
                         &_payload.event.owner_uuid,
+                        &_payload.event.gestor,
                     )
                     .await;
             }

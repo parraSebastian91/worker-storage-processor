@@ -4,7 +4,9 @@
 !.env.example
 
 # Rust build artifacts
-/target/
+target
+target/*
+
 **/*.rs.bk
 
 # Cargo local config (often machine-specific)

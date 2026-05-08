@@ -27,6 +27,7 @@ pub struct MediaSizeModel {
 pub struct StorageModel {
     pub asset_id: String,
     pub owner_uuid: String,
+    pub gestor: String,
     pub media_type: String,
     pub category_process: String,
     pub name_file: String,
