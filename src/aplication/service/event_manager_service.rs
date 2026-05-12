@@ -10,7 +10,7 @@ use crate::{
         models::{
             constantes_model::{CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER},
             factura_data_model::InvoiceData,
-            message_event_model::{PublishPayload, Recipe, VariantMetadataModel, VariantModel},
+            message_event_model::{PublishPayload, Recipe, RecipeMediaModel, VariantMetadataModel, VariantModel},
         },
         ports::outbound::{
             object_db_repository::IObjectDBRepository,
@@ -26,6 +26,19 @@ pub struct EventManagerService {
     image_process_service: Arc<ImageManagerService>,
     document_manager_service: Arc<DocumentManagerService>,
     // object_cache_repository: Arc<dyn IObjectCacheRepository>,
+}
+
+fn replace_extension(storage_key: &str, new_ext: &str) -> String {
+    let normalized_ext = new_ext.trim().trim_start_matches('.');
+    if normalized_ext.is_empty() {
+        return storage_key.to_string();
+    }
+
+    if let Some((base, _)) = storage_key.rsplit_once('.') {
+        format!("{}.{}", base, normalized_ext)
+    } else {
+        format!("{}.{}", storage_key, normalized_ext)
+    }
 }
 
 impl EventManagerService {
@@ -226,6 +239,50 @@ impl EventManagerService {
             ));
         }
 
+        // Renderizar primera página del PDF para compresión/variants y OCR.
+        let rendered_image_bytes = self
+            .document_manager_service
+            .render_first_page_png_from_pdf(&document_bytes)
+            .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
+
+        let media_recipe = RecipeMediaModel {
+            name: format!("{}-document-render", recipe.name),
+            target_size: recipe.target_size.clone(),
+            format: "webp".to_string(),
+            radio: 1.0,
+            priority: 0,
+        };
+
+        let mut processed_variants = if media_recipe.target_size.is_empty() {
+            vec![]
+        } else {
+            self.image_process_service
+                .process(&rendered_image_bytes, &media_recipe)
+                .map_err(|e| HandlerError::ProcessingError(e.to_string()))?
+        };
+
+        let main_image_key = replace_extension(&_payload.event.storage_key, "webp");
+        let mut saved_storage_key = main_image_key.clone();
+        if let Some(first_variant) = processed_variants.first() {
+            self.upload_object_final("", &main_image_key, first_variant.bytes.clone(), private)
+                .await
+                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        } else {
+            let fallback_image_key = replace_extension(&_payload.event.storage_key, "png");
+            self.upload_object_final("", &fallback_image_key, rendered_image_bytes.clone(), private)
+                .await
+                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+            saved_storage_key = fallback_image_key;
+        }
+
+        info!(
+            correlation_id = %correlation_id,
+            asset_id = %_payload.event.asset_id,
+            source_storage_key = %_payload.event.storage_key,
+            target_storage_key = %saved_storage_key,
+            "Documento convertido y guardado en formato de imagen"
+        );
+
         let language = if recipe.ocr_language.is_empty() {
             std::env::var("OCR_TESSERACT_LANG").unwrap_or_else(|_| "spa+eng".to_string())
         } else {
@@ -235,8 +292,43 @@ impl EventManagerService {
         // Extraer datos estructurados de la factura
         let invoice_data = self
             .document_manager_service
-            .extract_invoice_data_from_pdf(&document_bytes, &language)
+            .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
             .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
+
+        for media in processed_variants.drain(..) {
+            let key_object = format!(
+                "public/documents/{}/{}/{}-{}.{}",
+                _payload.event.owner_uuid,
+                _payload.event.category_process,
+                _payload.event.name_file,
+                media.size,
+                media.format
+            );
+
+            self.upload_object_final("", &key_object, media.bytes.clone(), private)
+                .await
+                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+
+            let metadata = VariantMetadataModel {
+                format: media.format.clone(),
+                size: media.size.clone(),
+                width: media.width,
+                height: media.height,
+                headers: "Cache-Control: public, max-age=31536000".to_string(),
+            };
+
+            let media_variant = VariantModel {
+                asset_id: _payload.event.asset_id.clone(),
+                name: format!("{}-{}", _payload.event.name_file, media.size),
+                metadata,
+                url_path: key_object.clone(),
+            };
+
+            self.object_repository
+                .create_variant(media_variant.into())
+                .await
+                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        }
 
         debug!(
             correlation_id = %correlation_id,
@@ -248,79 +340,79 @@ impl EventManagerService {
         );
 
         // Guardar texto completo de OCR
-        let text_key = format!(
-            "public/documents/{}/{}/{}-ocr.txt",
-            _payload.event.owner_uuid, _payload.event.category_process, _payload.event.name_file
-        );
+        // let text_key = format!(
+        //     "public/documents/{}/{}/{}-ocr.txt",
+        //     _payload.event.owner_uuid, _payload.event.category_process, _payload.event.name_file
+        // );
 
-        let full_text_bytes = invoice_data.full_text.join("\n").into_bytes();
-        self.upload_object_final("", &text_key, full_text_bytes, private)
-            .await
-            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        // let full_text_bytes = invoice_data.full_text.join("\n").into_bytes();
+        // self.upload_object_final("", &text_key, full_text_bytes, private)
+        //     .await
+        //     .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
-        let metadata = VariantMetadataModel {
-            format: "txt".to_string(),
-            size: "ocr".to_string(),
-            width: 0,
-            height: 0,
-            headers: "Content-Type: text/plain; charset=utf-8".to_string(),
-        };
+        // let metadata = VariantMetadataModel {
+        //     format: "txt".to_string(),
+        //     size: "ocr".to_string(),
+        //     width: 0,
+        //     height: 0,
+        //     headers: "Content-Type: text/plain; charset=utf-8".to_string(),
+        // };
 
-        let media_variant = VariantModel {
-            asset_id: _payload.event.asset_id.clone(),
-            name: format!("{}-ocr", _payload.event.name_file),
-            metadata,
-            url_path: text_key.clone(),
-        };
+        // let media_variant = VariantModel {
+        //     asset_id: _payload.event.asset_id.clone(),
+        //     name: format!("{}-ocr", _payload.event.name_file),
+        //     metadata,
+        //     url_path: text_key.clone(),
+        // };
 
-        self.object_repository
-            .create_variant(media_variant.into())
-            .await
-            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        // self.object_repository
+        //     .create_variant(media_variant.into())
+        //     .await
+        //     .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
         // Guardar datos extraídos en JSON
-        let invoice_json = serde_json::json!({
-            "numero_factura": &invoice_data.numero_factura,
-            "rut_deudor": &invoice_data.rut_deudor,
-            "nombre_deudor": &invoice_data.nombre_deudor,
-            "monto_total": &invoice_data.monto_total,
-            "extraction_timestamp": chrono::Utc::now().to_rfc3339(),
-            "total_lines_processed": invoice_data.full_text.len(),
-        });
+        // let invoice_json = serde_json::json!({
+        //     "numero_factura": &invoice_data.numero_factura,
+        //     "rut_deudor": &invoice_data.rut_deudor,
+        //     "nombre_deudor": &invoice_data.nombre_deudor,
+        //     "monto_total": &invoice_data.monto_total,
+        //     "extraction_timestamp": chrono::Utc::now().to_rfc3339(),
+        //     "total_lines_processed": invoice_data.full_text.len(),
+        // });
 
-        let json_key = format!(
-            "public/documents/{}/{}/{}-ocr.json",
-            _payload.event.owner_uuid, _payload.event.category_process, _payload.event.name_file
-        );
+        // let json_key = format!(
+        //     "public/documents/{}/{}/{}-ocr.json",
+        //     _payload.event.owner_uuid, _payload.event.category_process, _payload.event.name_file
+        // );
 
-        self.upload_object_final("", &json_key, invoice_json.to_string().into_bytes(), private)
-            .await
-            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        // self.upload_object_final("", &json_key, invoice_json.to_string().into_bytes(), private)
+        //     .await
+        //     .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
-        let json_metadata = VariantMetadataModel {
-            format: "json".to_string(),
-            size: "ocr-data".to_string(),
-            width: 0,
-            height: 0,
-            headers: "Content-Type: application/json; charset=utf-8".to_string(),
-        };
+        // let json_metadata = VariantMetadataModel {
+        //     format: "json".to_string(),
+        //     size: "ocr-data".to_string(),
+        //     width: 0,
+        //     height: 0,
+        //     headers: "Content-Type: application/json; charset=utf-8".to_string(),
+        // };
 
-        let json_variant = VariantModel {
-            asset_id: _payload.event.asset_id.clone(),
-            name: format!("{}-ocr-data", _payload.event.name_file),
-            metadata: json_metadata,
-            url_path: json_key.clone(),
-        };
+        // let json_variant = VariantModel {
+        //     asset_id: _payload.event.asset_id.clone(),
+        //     name: format!("{}-ocr-data", _payload.event.name_file),
+        //     metadata: json_metadata,
+        //     url_path: json_key.clone(),
+        // };
 
-        self.object_repository
-            .create_variant(json_variant.into())
-            .await
-            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+        // self.object_repository
+        //     .create_variant(json_variant.into())
+        //     .await
+        //     .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
 
         info!(
             correlation_id = %correlation_id,
             asset_id = %_payload.event.asset_id,
-            text_key = %text_key,
+            // text_key = %text_key,
             elapsed_ms = started_at.elapsed().as_millis(),
             "Procesamiento OCR de documento completado"
         );

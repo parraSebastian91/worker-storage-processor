@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_media_format() -> String {
+    "webp".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RecipeMediaModel {
     pub name: String,
@@ -18,7 +22,9 @@ pub struct MediaSizeModel {
     pub width: i32,
     pub height: i32,
     // Ejemplo: "webp"
+    #[serde(default = "default_media_format")]
     pub format: String,
+    #[serde(default)]
     pub priority: i32,
     #[serde(skip_deserializing, skip_serializing)]
     pub bytes: Vec<u8>, // Puedes usar un tipo específico si tienes una estructura definida para los metadatos
@@ -79,6 +85,8 @@ pub struct VariantMetadataModel {
 pub struct DocumentRecipeModel {
     pub name: String,
     pub ocr_language: String,
+    #[serde(default)]
+    pub target_size: Vec<MediaSizeModel>,
     pub category: String,
 }
 
