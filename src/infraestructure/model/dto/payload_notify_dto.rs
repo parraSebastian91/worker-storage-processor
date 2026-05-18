@@ -14,4 +14,5 @@ pub struct PayloadNotifyDTO {
     pub owner_uuid: String,
     pub gestor: String,
     pub payload: InvoiceData,
+    pub asset_id: String,
 }                

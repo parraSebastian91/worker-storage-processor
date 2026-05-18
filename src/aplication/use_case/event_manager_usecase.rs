@@ -101,6 +101,7 @@ impl IEventManagerUseCase for EventManagerUseCase {
                         correlation_id,
                         &_payload.event.owner_uuid,
                         &_payload.event.gestor,
+                        &_payload.event.asset_id,
                     )
                     .await;
             }

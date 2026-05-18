@@ -12,5 +12,6 @@ pub trait IExternalService {
         correlation_id: &str,
         owner_uuid: &str,
         gestor: &str,
+        asset_id: &str,
     ) -> String;
 }

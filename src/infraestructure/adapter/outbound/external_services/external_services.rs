@@ -32,6 +32,7 @@ impl IExternalService for ExternalServicesImpl {
         correlation_id: &str,
         owner_uuid: &str,
         gestor: &str,
+        asset_id: &str,
     ) -> String {
         if let Some(webhook_url) = &self.general_config.external_orchestrator_url {
             let payload = PayloadNotifyDTO {
@@ -43,6 +44,7 @@ impl IExternalService for ExternalServicesImpl {
                 owner_uuid: owner_uuid.to_string(),
                 payload: factura.clone(),
                 gestor: gestor.to_string(),
+                asset_id: asset_id.to_string(),
             };
 
             match self

@@ -393,9 +393,9 @@ impl DocumentManagerService {
             if let Ok(re) = Regex::new(pattern_str) {
                 for caps in re.captures_iter(text) {
                     if let Some(m) = caps.get(1) {
-                        let nombre = m.as_str().trim()
+                        let nombre = m.as_str().trim();
                         if !nombre.is_empty() && nombre.len() > 2 {
-                            nombres.push(nombre);
+                            nombres.push(nombre.to_string());
                         }
                     }
                 }
