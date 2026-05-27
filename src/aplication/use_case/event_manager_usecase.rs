@@ -102,6 +102,7 @@ impl IEventManagerUseCase for EventManagerUseCase {
                         &_payload.event.owner_uuid,
                         &_payload.event.gestor,
                         &_payload.event.asset_id,
+                        &_payload.event.factura_id,
                     )
                     .await;
             }

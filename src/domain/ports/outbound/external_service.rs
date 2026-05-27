@@ -13,5 +13,6 @@ pub trait IExternalService {
         owner_uuid: &str,
         gestor: &str,
         asset_id: &str,
+        factura_id: &str,
     ) -> String;
 }

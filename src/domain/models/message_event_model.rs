@@ -31,6 +31,7 @@ pub struct MediaSizeModel {
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StorageModel {
+    pub factura_id: String,
     pub asset_id: String,
     pub owner_uuid: String,
     pub gestor: String,
