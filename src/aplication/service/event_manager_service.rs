@@ -163,6 +163,7 @@ impl EventManagerService {
                 width: media.width,
                 height: media.height,
                 headers: "Cache-Control: public, max-age=31536000".to_string(),
+                data_obtenida: chrono::Utc::now().to_rfc3339(),
             };
 
             let media_variant = VariantModel {
@@ -295,6 +296,9 @@ impl EventManagerService {
             .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
             .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
 
+        let invoice_data_json = serde_json::to_string(&invoice_data)
+            .map_err(|e| HandlerError::ProcessingError(format!("No se pudo serializar invoice_data: {}", e)))?;
+
         for media in processed_variants.drain(..) {
             let key_object = format!(
                 "public/documents/{}/{}/{}-{}.{}",
@@ -315,6 +319,7 @@ impl EventManagerService {
                 width: media.width,
                 height: media.height,
                 headers: "Cache-Control: public, max-age=31536000".to_string(),
+                data_obtenida: invoice_data_json.clone(),
             };
 
             let media_variant = VariantModel {

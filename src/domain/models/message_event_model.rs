@@ -31,7 +31,8 @@ pub struct MediaSizeModel {
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StorageModel {
-    pub factura_id: String,
+    pub resource_type: String,
+    pub resource_id: String,
     pub asset_id: String,
     pub owner_uuid: String,
     pub gestor: String,
@@ -81,6 +82,7 @@ pub struct VariantMetadataModel {
     pub width: i32,
     pub height: i32,
     pub headers: String, // Cualquier otro metadato relevante
+    pub data_obtenida: String, // Fecha u otra información relevante
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DocumentRecipeModel {

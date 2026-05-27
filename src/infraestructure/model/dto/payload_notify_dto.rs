@@ -6,7 +6,8 @@ use crate::domain::models::factura_data_model::InvoiceData;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]                
 pub struct PayloadNotifyDTO {
-    pub factura_id: String,
+    pub resource_type: String,
+    pub resource_id: String,
     pub category: String,
     pub status: String,
     pub timestamp: String,
