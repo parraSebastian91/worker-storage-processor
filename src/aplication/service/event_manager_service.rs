@@ -8,9 +8,9 @@ use crate::{
     domain::{
         errors::handler_error::HandlerError,
         models::{
-            constantes_model::{CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER},
-            factura_data_model::InvoiceData,
-            message_event_model::{PublishPayload, Recipe, RecipeMediaModel, VariantMetadataModel, VariantModel},
+            CATEGORY_PROCESS_DOCUMENT_DTO, constantes_model::{CATEGORY_PROCESS_DOCUMENT_DTO_RESPALDO, CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER}, factura_data_model::InvoiceData, message_event_model::{
+                PublishPayload, Recipe, RecipeMediaModel, VariantMetadataModel, VariantModel,
+            }
         },
         ports::outbound::{
             object_db_repository::IObjectDBRepository,
@@ -58,7 +58,11 @@ impl EventManagerService {
         }
     }
 
-    pub async fn handle_image_process(&self, _payload: PublishPayload, _private: bool) -> Result<(), HandlerError> {
+    pub async fn handle_image_process(
+        &self,
+        _payload: PublishPayload,
+        _private: bool,
+    ) -> Result<(), HandlerError> {
         let started_at = Instant::now();
         let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
 
@@ -195,7 +199,11 @@ impl EventManagerService {
         Ok(())
     }
 
-    pub async fn handle_video_process(&self, _payload: PublishPayload, _private: bool) -> Result<(), HandlerError> {
+    pub async fn handle_video_process(
+        &self,
+        _payload: PublishPayload,
+        _private: bool,
+    ) -> Result<(), HandlerError> {
         info!("Manejando mensaje de video con EventManagerService...");
         info!("Payload recibido: {:?}", _payload);
         Ok(())
@@ -270,9 +278,14 @@ impl EventManagerService {
                 .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
         } else {
             let fallback_image_key = replace_extension(&_payload.event.storage_key, "png");
-            self.upload_object_final("", &fallback_image_key, rendered_image_bytes.clone(), private)
-                .await
-                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+            self.upload_object_final(
+                "",
+                &fallback_image_key,
+                rendered_image_bytes.clone(),
+                private,
+            )
+            .await
+            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
             saved_storage_key = fallback_image_key;
         }
 
@@ -291,13 +304,24 @@ impl EventManagerService {
         };
 
         // Extraer datos estructurados de la factura
-        let invoice_data = self
-            .document_manager_service
-            .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
-            .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
+        // let invoice_data = self
+        //     .document_manager_service
+        //     .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
+        //     .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
 
-        let invoice_data_json = serde_json::to_string(&invoice_data)
-            .map_err(|e| HandlerError::ProcessingError(format!("No se pudo serializar invoice_data: {}", e)))?;
+        let invoice_data = match _payload.event.category_process.as_str() {
+            CATEGORY_PROCESS_DOCUMENT_DTO | CATEGORY_PROCESS_DOCUMENT_DTO_RESPALDO => self
+                .document_manager_service
+                .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
+                .map_err(|e| HandlerError::ProcessingError(e.to_string())),
+            _ => Ok(InvoiceData {
+                numero_factura: vec![],
+                rut_deudor: vec![],
+                nombre_deudor: vec![],
+                monto_total: vec![],
+                full_text: vec![],
+            }),
+        }?;
 
         for media in processed_variants.drain(..) {
             let key_object = format!(
@@ -319,7 +343,12 @@ impl EventManagerService {
                 width: media.width,
                 height: media.height,
                 headers: "Cache-Control: public, max-age=31536000".to_string(),
-                data_obtenida: invoice_data_json.clone(),
+                data_obtenida: serde_json::to_string(&invoice_data).map_err(|e| {
+                    HandlerError::ProcessingError(format!(
+                        "No se pudo serializar invoice_data: {}",
+                        e
+                    ))
+                })?,
             };
 
             let media_variant = VariantModel {
