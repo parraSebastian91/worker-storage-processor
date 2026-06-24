@@ -94,20 +94,20 @@ impl AppConfig {
         };
 
         let queue_config = QueueConfig {
-            url: env::var("QUEUE_URL")
-                .map_err(|_| ConfigError::MissingEnvVar("QUEUE_URL is not set".to_string()))?,
-            queue: env::var("QUEUE_NAME")
-                .map_err(|_| ConfigError::MissingEnvVar("QUEUE_NAME is not set".to_string()))?,
-            prefetch_count: env::var("QUEUE_PREFETCH_COUNT")
+            url: env::var("RABBITMQ_URL")
+                .map_err(|_| ConfigError::MissingEnvVar("RABBITMQ_URL is not set".to_string()))?,
+            queue: env::var("RABBITMQ_QUEUE")
+                .map_err(|_| ConfigError::MissingEnvVar("RABBITMQ_QUEUE is not set".to_string()))?,
+            prefetch_count: env::var("RABBITMQ_PREFETCH_COUNT")
                 .unwrap_or_else(|_| "10".to_string())
                 .parse()
                 .map_err(|_| {
                     ConfigError::MissingEnvVar("Invalid QUEUE_PREFETCH_COUNT".to_string())
                 })?,
-            exchange: env::var("QUEUE_EXCHANGE")
-                .or_else(|_| env::var("QUEUE_EXCHANGE_NAME"))
+            exchange: env::var("RABBITMQ_EXCHANGE_TASK")
+                .or_else(|_| env::var("RABBITMQ_EXCHANGE_TASK"))
                 .unwrap_or_else(|_| "".to_string()),
-            routing_key: env::var("QUEUE_ROUTING_KEY").unwrap_or_else(|_| "".to_string()),
+            routing_key: env::var("RABBITMQ_KEY_MEDIA_IMAGE_RESIZE").unwrap_or_else(|_| "".to_string()),
             max_retries: env::var("QUEUE_MAX_RETRIES")
                 .unwrap_or_else(|_| "5".to_string())
                 .parse()
