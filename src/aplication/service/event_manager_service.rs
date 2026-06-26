@@ -142,11 +142,12 @@ impl EventManagerService {
                 bytes = media.bytes.len(),
                 "Variante procesada"
             );
+            let safe_name = _payload.event.name_file.replace(' ', "_");
             let key_object = format!(
                 "profile-pictures/{}/{}/{}-{}.{}",
                 _payload.event.owner_uuid,
                 _payload.event.category_process,
-                _payload.event.name_file,
+                safe_name,
                 media.size,
                 media.format
             );
@@ -324,11 +325,12 @@ impl EventManagerService {
         }?;
 
         for media in processed_variants.drain(..) {
+            let safe_name = _payload.event.name_file.replace(' ', "_");
             let key_object = format!(
                 "public/documents/{}/{}/{}-{}.{}",
                 _payload.event.owner_uuid,
                 _payload.event.category_process,
-                _payload.event.name_file,
+                safe_name,
                 media.size,
                 media.format
             );
