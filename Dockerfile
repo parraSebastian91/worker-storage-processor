@@ -96,6 +96,8 @@ RUN set -eux; \
         ca-certificates \
         libssl3 \
         curl \
+        jq \
+        bash \
         tar; \
     if [ "$ENABLE_OCR" = "true" ]; then \
         apt-get install -y --no-install-recommends \
@@ -123,6 +125,11 @@ COPY --from=builder /app/worker-storage-processor ./
 RUN useradd --no-create-home --shell /bin/false appuser && \
     chown appuser:appuser ./worker-storage-processor
 
+COPY entrypoint-with-vault.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 USER appuser
 
+# Secrets desde Vault (mismo lineamiento que el resto de servicios)
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["./worker-storage-processor"]
