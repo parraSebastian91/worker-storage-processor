@@ -2,6 +2,7 @@ pub mod constantes_model;
 pub mod factura_data_model;
 pub mod media_status_enum;
 pub mod message_event_model;
+pub mod ted_model;
 pub use constantes_model::{
     CATEGORY_PROCESS_DOCUMENT_DTO, CATEGORY_PROCESS_SOCIAL_POST, CATEGORY_PROCESS_USER_AVATAR,
     CATEGORY_PROCESS_USER_BANNER, MEDIA_TYPE_ARCHIVE, MEDIA_TYPE_DOCUMENT, MEDIA_TYPE_IMAGE,

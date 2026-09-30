@@ -7,9 +7,20 @@ edition = "2021"
 name = "worker-storage-processor"
 path = "cmd/api/main.rs"
 
+# Laboratorio para probar y ajustar la lectura del timbre contra facturas
+# reales, sin levantar RabbitMQ ni el pipeline completo.
+[[bin]]
+name = "lab-timbre"
+path = "cmd/lab_timbre/main.rs"
+required-features = ["timbre"]
+
 [features]
 default = []
 ocr = ["dep:pdfium-render", "dep:tesseract"]
+# Lectura del timbre electrónico (PDF417/TED). Separada de `ocr` a propósito:
+# `ocr` arrastra tesseract y pdfium, que son librerías nativas del sistema, y
+# sin esta separación no se podría iterar sobre el timbre fuera de Docker.
+timbre = ["dep:rxing", "dep:rsa", "dep:sha1"]
 
 [dependencies]
 # Async Runtime
@@ -64,6 +75,11 @@ webp = "0.3"
 # OCR / PDF
 pdfium-render = { version = "0.8", optional = true }
 tesseract = { version = "0.15", optional = true }
+
+# Timbre electrónico (PDF417 → TED → verificación de la firma)
+rxing = { version = "0.9", optional = true }
+rsa = { version = "0.9", features = ["sha1"], optional = true }
+sha1 = { version = "0.10", optional = true }
 
 [profile.release]
 opt-level = 3

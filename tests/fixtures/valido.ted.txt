@@ -1,0 +1,29 @@
+<TED version="1.0"><DD>
+<RE>76543210-K</RE>
+<TD>33</TD>
+<F>128</F>
+<FE>2026-06-14</FE>
+<RR>77777777-7</RR>
+<RSR>PEÑALOLÉN DISTRIBUCIÓN LTDA</RSR>
+<MNT>1250500</MNT>
+<IT1>Señalización y montaje, instalación básica</IT1>
+<CAF version="1.0">
+<DA>
+<RE>76543210-K</RE>
+<RS>EMISOR DE PRUEBA SpA</RS>
+<TD>33</TD>
+<RNG>
+<D>1</D>
+<H>1000</H>
+</RNG>
+<FA>2026-01-01</FA>
+<RSAPK>
+<M>xt3RE43yLHSiI9NKrswpf+qur5ZiPBQijDlk7WBWMSRuCkR5xmGbH3qzCFC4eVftp/Ogq2QZSD6K9tKhdiGAq05vFyhf06SO/QEuBkjxqOAIE+xhQsyrzLdhxeUww9Y9LZC/pfbWDuobQK0BP5zem74mhg6h7DGV+TdBuOgz2fk=</M>
+<E>Aw==</E>
+</RSAPK>
+<IDK>300</IDK>
+</DA>
+<FRMA algoritmo="SHA1withRSA">firmaDelSiiQueEstaFaseNoVerifica</FRMA>
+</CAF>
+<TSTED>2026-06-14T10:30:00</TSTED>
+</DD><FRMT algoritmo="SHA1withRSA">eGgaf/YIhYTYcgzdCdRs4+YFjxmumg9WlAn9i28pIE1b5Ss+jBYONqmnfE/v5NaoooRlyq9iYpdBwYLWtHwNyMmmStKquldqzEDQUm93SIbbb7AVcA3sdRPTsTpv17GmHH6ML3Nk4rs09DtluumE8i53mjHaJfED1DElXBWwgCs=</FRMT></TED>
