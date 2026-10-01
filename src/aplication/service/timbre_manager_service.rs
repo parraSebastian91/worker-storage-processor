@@ -201,17 +201,29 @@ impl TimbreManagerService {
             Err(_) => return Verificacion::FirmaInvalida,
         };
 
-        // ⚠️ La firma va sobre el DD COMPACTADO. En el timbre el DD viaja
-        // "pretty", con whitespace entre tags; verificar sobre él falla siempre
-        // y parece un problema de la clave. Es de los errores que cuestan días.
-        let compacto = Self::compactar(dd);
-        let bytes: Vec<u8> = compacto.chars().map(|c| c as u8).collect();
-
+        // Se prueban las DOS formas del DD, y el orden importa.
+        //
+        // Lo que se firmó es el DD tal como lo armó el facturador. Medido sobre
+        // facturas reales de 4 facturadores distintos, el DD viaja **ya
+        // compacto**: cero whitespace entre tags, y verifica tal cual. Pero la
+        // especificación no obliga a eso, y un emisor podría mandarlo con
+        // saltos de línea; ahí hay dos posibilidades —que haya firmado el
+        // compacto o el que viaja— y no se puede saber de antemano cuál.
+        //
+        // Por eso: primero tal como viene (que es lo correcto por definición),
+        // y si falla, compactado. Compactar SIEMPRE sería un error: rompería el
+        // caso de un DD con whitespace firmado tal cual.
         let verificador: VerifyingKey<Sha1> = VerifyingKey::new(clave);
-        match verificador.verify(&bytes, &firma) {
-            Ok(()) => Verificacion::Verificado,
-            Err(_) => Verificacion::FirmaInvalida,
+        let a_bytes = |t: &str| -> Vec<u8> { t.chars().map(|c| c as u8).collect() };
+
+        if verificador.verify(&a_bytes(dd), &firma).is_ok() {
+            return Verificacion::Verificado;
         }
+        let compacto = Self::compactar(dd);
+        if compacto != dd && verificador.verify(&a_bytes(&compacto), &firma).is_ok() {
+            return Verificacion::Verificado;
+        }
+        Verificacion::FirmaInvalida
     }
 
     #[cfg(not(feature = "timbre"))]

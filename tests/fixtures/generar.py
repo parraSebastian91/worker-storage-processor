@@ -35,7 +35,10 @@ def b64_de_entero(n: int) -> str:
     return base64.b64encode(n.to_bytes((n.bit_length() + 7) // 8, "big")).decode()
 
 
-def armar_ted(folio: int, rsr: str, mnt: int, it1: str, td: int = 33):
+def armar_ted(folio: int, rsr: str, mnt: int, it1: str, td: int = 33, pretty: bool = True):
+    """`pretty=False` deja el DD compacto, que es como viaja en las facturas
+    reales medidas. Con `pretty=True` lleva CRLF entre tags, para ejercitar el
+    camino de compactación."""
     # Exponente 3, como los CAF reales del SII.
     llave = rsa.generate_private_key(public_exponent=3, key_size=1024)
     nums = llave.public_key().public_numbers()
@@ -61,7 +64,8 @@ def armar_ted(folio: int, rsr: str, mnt: int, it1: str, td: int = 33):
         "<TSTED>2026-06-14T10:30:00</TSTED>"
     )
     # Así viaja en el timbre: "pretty", con CRLF entre tags.
-    dd = "<DD>\r\n" + interior.replace("><", ">\r\n<") + "\r\n</DD>"
+    dd = ("<DD>\r\n" + interior.replace("><", ">\r\n<") + "\r\n</DD>"
+          if pretty else f"<DD>{interior}</DD>")
     firma = llave.sign(compactar(dd).encode("ISO-8859-1"), padding.PKCS1v15(), hashes.SHA1())
     frmt = base64.b64encode(firma).decode()
     return f'<TED version="1.0">{dd}<FRMT algoritmo="SHA1withRSA">{frmt}</FRMT></TED>'
@@ -84,6 +88,10 @@ if __name__ == "__main__":
 
     # Mismo timbre con el monto cambiado DESPUÉS de firmar: la firma ya no cuadra.
     guardar("adulterado", ok.replace("<MNT>1250500</MNT>", "<MNT>9999999</MNT>"))
+
+    # DD compacto: la forma en que viaja en las facturas reales medidas.
+    guardar("compacto", armar_ted(129, "CLIENTE SIN ACENTOS", 500000,
+                                  "Servicio", pretty=False))
 
     # Documento no cedible: una boleta (39) no se puede ceder a un factoring.
     guardar("no_cedible", armar_ted(77, "CLIENTE FINAL", 11900, "Producto", td=39))

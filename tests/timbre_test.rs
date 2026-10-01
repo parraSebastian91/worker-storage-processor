@@ -86,18 +86,33 @@ fn detecta_el_monto_adulterado() {
     );
 }
 
-/// La firma va sobre el DD compactado. Verificar sobre el DD tal como viaja
-/// falla siempre, y el síntoma parece un problema de la clave.
+/// El DD se firma tal como lo armó el facturador. En las 4 facturas reales
+/// medidas viaja **ya compacto** y verifica tal cual; pero nada obliga a eso,
+/// así que el verificador tiene que aguantar las dos formas. Compactar siempre
+/// rompería el caso de un DD con whitespace firmado tal cual.
 #[test]
-fn la_compactacion_del_dd_es_necesaria() {
-    let ted = TimbreManagerService::new().decodificar(&fixture("valido")).unwrap();
+fn verifica_el_dd_venga_compacto_o_con_whitespace() {
+    let servicio = TimbreManagerService::new();
+
+    let pretty = servicio.decodificar(&fixture("valido")).unwrap();
     assert!(
-        ted.contains(">\r\n<") || ted.contains(">\n<"),
-        "el DD del fixture tiene que viajar con whitespace entre tags, si no \
-         este test no está probando la compactación"
+        pretty.contains(">\r\n<") || pretty.contains(">\n<"),
+        "el fixture `valido` tiene que traer whitespace entre tags, si no este \
+         test no prueba el camino de compactación"
     );
     assert_eq!(
-        TimbreManagerService::interpretar(&ted).verificacion,
+        servicio.leer(&fixture("valido")).unwrap().verificacion,
+        Verificacion::Verificado
+    );
+
+    let compacto = servicio.decodificar(&fixture("compacto")).unwrap();
+    let dd = &compacto[compacto.find("<DD>").unwrap()..compacto.find("</DD>").unwrap()];
+    assert!(
+        !dd.contains("> <") && !dd.contains(">\n<") && !dd.contains(">\r\n<"),
+        "el fixture `compacto` tiene que venir sin whitespace, como las reales"
+    );
+    assert_eq!(
+        servicio.leer(&fixture("compacto")).unwrap().verificacion,
         Verificacion::Verificado
     );
 }
