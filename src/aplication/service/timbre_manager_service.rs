@@ -43,8 +43,24 @@ impl TimbreManagerService {
     }
 
     /// Decodifica el PDF417 y devuelve el TED como texto latin-1.
+    ///
+    /// Prueba la imagen tal cual y, si falla, invertida. No es defensivo de
+    /// más: hay facturadores que embeben el timbre como bitmap con la polaridad
+    /// invertida (barras blancas sobre fondo negro). pdfium lo pinta bien en la
+    /// página, pero si se lee el bitmap embebido —que es lo que conviene hacer,
+    /// porque evita el reescalado— viene al revés y ningún decodificador lo
+    /// toma. Medido sobre una factura real.
     #[cfg(feature = "timbre")]
     pub fn decodificar(&self, img: &image::DynamicImage) -> Option<String> {
+        self.decodificar_directo(img).or_else(|| {
+            let mut invertida = img.clone();
+            image::imageops::invert(&mut invertida);
+            self.decodificar_directo(&invertida)
+        })
+    }
+
+    #[cfg(feature = "timbre")]
+    fn decodificar_directo(&self, img: &image::DynamicImage) -> Option<String> {
         let (w, h) = (img.width(), img.height());
         let luma = img.to_luma8().into_raw();
 
