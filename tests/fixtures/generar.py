@@ -80,6 +80,23 @@ def guardar(nombre: str, ted: str):
     print(f"  {nombre:24} {len(datos):5} bytes, {altos} sobre 0x7F")
 
 
+def guardar_con_simbolo_corrupto(nombre: str, ted: str, de: str, a: str):
+    """Firma el TED correcto pero imprime el símbolo con un carácter cambiado.
+
+    Reproduce un defecto REAL medido sobre el corpus: un facturador cuyo encoder
+    no cambia a modo byte ante un carácter fuera del ASCII imprimible emite en su
+    lugar uno de la tabla de puntuación de PDF417 —se midió un `º` (0xBA) que
+    salió como `]` (0x5D)— mientras firma el texto correcto. Ese timbre no
+    verifica tal cual para nadie, y acusarlo de firma inválida sería acusar de
+    adulterada a una factura legítima.
+    """
+    (AQUI / f"{nombre}.ted.txt").write_bytes(ted.encode("ISO-8859-1"))
+    datos = ted.replace(de, a).encode("ISO-8859-1")
+    codes = encode(datos, columns=12, security_level=5, encoding="iso-8859-1")
+    render_image(codes, scale=3, ratio=3, padding=12).save(AQUI / f"{nombre}.png")
+    print(f"  {nombre:24} {len(datos):5} bytes, símbolo con {de!r} → {a!r}")
+
+
 if __name__ == "__main__":
     # Caso feliz, con ñ y acentos: los bytes que se corrompen si se lee UTF-8.
     ok = armar_ted(128, "PEÑALOLÉN DISTRIBUCIÓN LTDA", 1250500,
@@ -95,4 +112,13 @@ if __name__ == "__main__":
 
     # Documento no cedible: una boleta (39) no se puede ceder a un factoring.
     guardar("no_cedible", armar_ted(77, "CLIENTE FINAL", 11900, "Producto", td=39))
+    # El símbolo imprime "]" donde el DD firmado dice "º": la firma sólo cuadra
+    # si se repara el carácter, y que cuadre es la prueba de que se reparó bien.
+    guardar_con_simbolo_corrupto(
+        "simbolo_corrupto",
+        armar_ted(640, "REGIMIENTO LOGISTICO Nº2", 981907, "Insumos"),
+        "Nº2",
+        "N]2",
+    )
+
     print("\nlisto. Los .ted.txt son el original, para comparar byte a byte.")

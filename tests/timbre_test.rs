@@ -142,3 +142,37 @@ fn una_imagen_sin_timbre_no_es_error() {
     ));
     assert!(TimbreManagerService::new().leer(&vacia).is_none());
 }
+
+#[test]
+fn un_simbolo_con_un_caracter_corrupto_se_repara_y_verifica() {
+    // Defecto real medido en el corpus: el encoder del facturador no cambia a
+    // modo byte ante un `º` y lo imprime como `]`, mientras firma el texto
+    // correcto. El timbre impreso no verifica tal cual para nadie.
+    //
+    // La reparación no adivina el carácter: busca el texto cuyo SHA1 cuadra con
+    // el que la firma declara. Que cuadre es prueba criptográfica, así que el
+    // valor reparado es exactamente el que se firmó.
+    let l = TimbreManagerService::new()
+        .leer(&fixture("simbolo_corrupto"))
+        .expect("el símbolo decodifica, aunque traiga un carácter cambiado");
+
+    assert_eq!(l.verificacion, Verificacion::VerificadoConReparacion);
+    assert_eq!(
+        l.ted.razon_social_receptor, "REGIMIENTO LOGISTICO Nº2",
+        "se muestra el valor firmado, no el que el símbolo trae corrupto"
+    );
+    assert_eq!(l.ted.folio, 640);
+    assert_eq!(l.ted.monto_total, 981907);
+}
+
+#[test]
+fn reparar_no_sirve_para_blanquear_un_documento_adulterado() {
+    // El límite que importa: la reparación prueba sustituciones hasta que el
+    // SHA1 cuadre. Un DD al que le cambiaron el monto después de firmar no tiene
+    // ninguna sustitución de UN carácter de puntuación que lo haga cuadrar —
+    // haría falta una colisión de SHA1. Sigue siendo firma inválida.
+    let l = TimbreManagerService::new()
+        .leer(&fixture("adulterado"))
+        .expect("el símbolo decodifica");
+    assert_eq!(l.verificacion, Verificacion::FirmaInvalida);
+}

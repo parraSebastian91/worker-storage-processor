@@ -1,0 +1,29 @@
+<TED version="1.0"><DD>
+<RE>76543210-K</RE>
+<TD>33</TD>
+<F>640</F>
+<FE>2026-06-14</FE>
+<RR>77777777-7</RR>
+<RSR>REGIMIENTO LOGISTICO Nº2</RSR>
+<MNT>981907</MNT>
+<IT1>Insumos</IT1>
+<CAF version="1.0">
+<DA>
+<RE>76543210-K</RE>
+<RS>EMISOR DE PRUEBA SpA</RS>
+<TD>33</TD>
+<RNG>
+<D>1</D>
+<H>1000</H>
+</RNG>
+<FA>2026-01-01</FA>
+<RSAPK>
+<M>ybQwMwBBPqR6WOs5cg+RwfitwYqndsFCKTK/bBxKyeypHLsXMEOWZIpowMhD93+biPd3nhBus1eEdRE0HMPGvjlZOYXY4hsoL7f8oNj8VbS8rpLzWS+tQNNkecgg02R3CVeZjLTtVusVTDxXpy3+tAGEoBEUaZieHVYR0q1iJW0=</M>
+<E>Aw==</E>
+</RSAPK>
+<IDK>300</IDK>
+</DA>
+<FRMA algoritmo="SHA1withRSA">firmaDelSiiQueEstaFaseNoVerifica</FRMA>
+</CAF>
+<TSTED>2026-06-14T10:30:00</TSTED>
+</DD><FRMT algoritmo="SHA1withRSA">rihNpv968v0fjz3LqaFQIN10hSwLXKm/WTeLapQ2ah44SoPUlq/ynpFYMb67wny+05iEM/F6yiq+4IH1Fts66y3drOsjjk6qU6rGaKCS03cM8Xp15JY2cIrOdh9hCwchmNqV4Z/Et0Nbu4gv8bhfqEsFrM/r3aJKI24io/lDyYI=</FRMT></TED>

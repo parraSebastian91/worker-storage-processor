@@ -141,7 +141,14 @@ impl TimbreManagerService {
             }
         };
 
-        let verificacion = Self::verificar(ted, dd);
+        let (verificacion, dd_bueno) = Self::verificar(ted, dd);
+        // Si hubo reparación, el DD bueno es el reparado: sus campos son los que
+        // el facturador firmó, no los que el símbolo impreso dice. Se reparsea,
+        // porque si no mostraríamos "N]2" sabiendo que dice "Nº2".
+        let ted_parseado = match dd_bueno {
+            Some(d) if d != dd => Self::parsear_dd(&d).unwrap_or(ted_parseado),
+            _ => ted_parseado,
+        };
         LecturaTimbre {
             ted: ted_parseado,
             verificacion,
@@ -168,7 +175,7 @@ impl TimbreManagerService {
     /// eso habría que verificar la `<FRMA>` del propio CAF contra la clave del
     /// SII, que no viene en el documento.
     #[cfg(feature = "timbre")]
-    fn verificar(ted: &str, dd: &str) -> Verificacion {
+    fn verificar(ted: &str, dd: &str) -> (Verificacion, Option<String>) {
         use base64::{engine::general_purpose::STANDARD, Engine};
         use rsa::pkcs1v15::{Signature, VerifyingKey};
         use rsa::signature::Verifier;
@@ -177,7 +184,7 @@ impl TimbreManagerService {
 
         let frmt_b64: String = match Self::contenido(ted, "FRMT") {
             Some(s) => s.split_whitespace().collect(),
-            None => return Verificacion::TedIncompleto,
+            None => return (Verificacion::TedIncompleto, None),
         };
 
         // ⚠️ El CAF embebido en el TED trae la clave como módulo y exponente en
@@ -186,18 +193,18 @@ impl TimbreManagerService {
         // sobre facturas reales de 4 facturadores distintos.
         let rsapk = match Self::entre(dd, "<RSAPK>", "</RSAPK>") {
             Some(s) => s,
-            None => return Verificacion::SinClavePublica,
+            None => return (Verificacion::SinClavePublica, None),
         };
         let (m, e) = match (Self::contenido(rsapk, "M"), Self::contenido(rsapk, "E")) {
             (Some(m), Some(e)) => (m, e),
-            _ => return Verificacion::SinClavePublica,
+            _ => return (Verificacion::SinClavePublica, None),
         };
         let (m, e) = match (
             STANDARD.decode(m.trim().replace(['\n', '\r', ' '], "")),
             STANDARD.decode(e.trim().replace(['\n', '\r', ' '], "")),
         ) {
             (Ok(m), Ok(e)) => (m, e),
-            _ => return Verificacion::SinClavePublica,
+            _ => return (Verificacion::SinClavePublica, None),
         };
 
         // `new_unchecked` y no `new`: los CAF del SII usan claves de 512 bits
@@ -210,11 +217,11 @@ impl TimbreManagerService {
 
         let firma = match STANDARD.decode(frmt_b64.trim()) {
             Ok(f) => f,
-            Err(_) => return Verificacion::FirmaInvalida,
+            Err(_) => return (Verificacion::FirmaInvalida, None),
         };
         let firma = match Signature::try_from(firma.as_slice()) {
             Ok(f) => f,
-            Err(_) => return Verificacion::FirmaInvalida,
+            Err(_) => return (Verificacion::FirmaInvalida, None),
         };
 
         // Se prueban las DOS formas del DD, y el orden importa.
@@ -233,18 +240,89 @@ impl TimbreManagerService {
         let a_bytes = |t: &str| -> Vec<u8> { t.chars().map(|c| c as u8).collect() };
 
         if verificador.verify(&a_bytes(dd), &firma).is_ok() {
-            return Verificacion::Verificado;
+            return (Verificacion::Verificado, Some(dd.to_string()));
         }
         let compacto = Self::compactar(dd);
         if compacto != dd && verificador.verify(&a_bytes(&compacto), &firma).is_ok() {
-            return Verificacion::Verificado;
+            return (Verificacion::Verificado, Some(compacto));
         }
-        Verificacion::FirmaInvalida
+
+        // Último intento: reparar un carácter corrupto del símbolo.
+        for base in [dd, compacto.as_str()] {
+            if let Some(reparado) = Self::reparar(base, &|t: &str| {
+                verificador.verify(&a_bytes(t), &firma).is_ok()
+            }) {
+                return (Verificacion::VerificadoConReparacion, Some(reparado));
+            }
+        }
+        (Verificacion::FirmaInvalida, None)
     }
 
     #[cfg(not(feature = "timbre"))]
-    fn verificar(_ted: &str, _dd: &str) -> Verificacion {
-        Verificacion::SinClavePublica
+    fn verificar(_ted: &str, _dd: &str) -> (Verificacion, Option<String>) {
+        (Verificacion::SinClavePublica, None)
+    }
+
+    /// Busca el DD original cuando el símbolo impreso trae un carácter corrupto.
+    ///
+    /// Por qué hace falta: el modo texto de PDF417 sólo representa un subconjunto
+    /// ASCII. Un facturador cuyo encoder no cambia a modo byte ante un `º`
+    /// imprime en su lugar algún carácter de la tabla de puntuación —medido: un
+    /// `º` (0xBA) salió como `]` (0x5D)— mientras firma el texto correcto. Ese
+    /// timbre no verifica tal cual **para nadie**, y acusarlo de firma inválida
+    /// sería acusar de adulterada a una factura legítima.
+    ///
+    /// Por qué es seguro: no se adivina el carácter, se **busca** el texto cuyo
+    /// SHA1 cuadra con el que la firma declara. Que cuadre es prueba, no
+    /// indicio: no se puede acertar un SHA1 por casualidad, y nadie puede usar
+    /// esto para hacer verificar un DD adulterado, porque eso exigiría encontrar
+    /// una colisión. Lo peor que puede pasar es gastar unos microsegundos y no
+    /// encontrar nada.
+    ///
+    /// Acotado a propósito: sólo posiciones cuyo carácter pertenece a la tabla
+    /// de puntuación de PDF417 —los únicos que el encoder puede haber emitido
+    /// por este motivo—, de a UNA por vez, y nunca más de
+    /// `MAX_POSICIONES_A_REPARAR`. Sin ese tope, un DD con muchos corchetes
+    /// legítimos (`[BE]`, `[RT]` en descripciones de remedios: 29 apariciones en
+    /// el corpus) haría crecer el trabajo sin aportar nada.
+    #[cfg(feature = "timbre")]
+    fn reparar(dd: &str, verifica: &dyn Fn(&str) -> bool) -> Option<String> {
+        /// Caracteres de la tabla de puntuación de PDF417 que **no tienen nada
+        /// que hacer dentro de un valor del TED**.
+        ///
+        /// El conjunto es angosto a propósito. La tabla completa incluye `<`,
+        /// `>`, `/`, `-`, `.`, `:` y comillas, que son la marcación XML del
+        /// propio DD: meterlos acá haría que cada DD tuviera cientos de
+        /// posiciones candidatas y el tope de abajo abortaría siempre. Lo que
+        /// queda son los que sólo pueden aparecer en una razón social o una
+        /// descripción, y que por lo tanto delatan una sustitución.
+        const SOSPECHOSOS: &str = "[]\\_@;~`|{}^";
+        const MAX_POSICIONES_A_REPARAR: usize = 4;
+
+        let chars: Vec<char> = dd.chars().collect();
+        let sospechosas: Vec<usize> = chars
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| SOSPECHOSOS.contains(**c))
+            .map(|(i, _)| i)
+            .collect();
+        if sospechosas.is_empty() || sospechosas.len() > MAX_POSICIONES_A_REPARAR {
+            return None;
+        }
+
+        // 0xA0–0xFF: el rango de Latin-1 con los caracteres que un facturador
+        // chileno puede poner en una razón social (º, °, ª, Ñ, acentos).
+        for &i in &sospechosas {
+            for byte in 0xA0u32..=0xFF {
+                let mut intento = chars.clone();
+                intento[i] = char::from_u32(byte).unwrap();
+                let texto: String = intento.into_iter().collect();
+                if verifica(&texto) {
+                    return Some(texto);
+                }
+            }
+        }
+        None
     }
 
     /// Quita el whitespace entre tags. Equivale a `>\s+<` → `><`.

@@ -41,6 +41,17 @@ pub enum Verificacion {
     /// La firma corresponde al DD: el documento no fue alterado después de
     /// timbrarse, y lo timbró quien tiene la privada de ese CAF.
     Verificado,
+    /// Igual que `Verificado`, pero hubo que reparar un carácter que el símbolo
+    /// impreso trae corrupto.
+    ///
+    /// No es una verificación más débil: la firma cuadra, y eso es prueba
+    /// criptográfica de que el texto reparado es exactamente el que se firmó —
+    /// no se puede "acertar" un SHA1 por casualidad. Se distingue de
+    /// `Verificado` porque señala un **defecto del facturador**: su encoder
+    /// metió un carácter no representable en el modo texto de PDF417 en vez de
+    /// cambiar a modo byte, así que el timbre impreso no verifica tal cual para
+    /// nadie. Vale reportarlo.
+    VerificadoConReparacion,
     /// El timbre se leyó pero la firma no cuadra: DD adulterado, o un CAF que
     /// no corresponde.
     FirmaInvalida,
@@ -88,7 +99,9 @@ pub struct LecturaTimbre {
 impl LecturaTimbre {
     pub fn origen(&self) -> OrigenDatos {
         match self.verificacion {
-            Verificacion::Verificado => OrigenDatos::TimbreVerificado,
+            Verificacion::Verificado | Verificacion::VerificadoConReparacion => {
+                OrigenDatos::TimbreVerificado
+            }
             _ => OrigenDatos::TimbreSinVerificar,
         }
     }

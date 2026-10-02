@@ -137,23 +137,96 @@ impl DocumentManagerService {
         // transformación de la página. Es justo lo que se quiere: cualquier
         // escalado lo hace la página, y es lo que hay que evitar.
         let mut imagenes = Vec::new();
-        for objeto in pagina.objects().iter() {
-            if let Some(img) = objeto.as_image_object() {
-                if let Ok(d) = img.get_raw_image() {
-                    imagenes.push(d);
-                }
-            }
-        }
+        Self::recolectar_imagenes(pagina.objects(), &mut imagenes);
         info!("Imágenes embebidas en la primera página: {}", imagenes.len());
         Ok(imagenes)
     }
 
-    /// Enlaza pdfium.
+    /// Recorre los objetos bajando a los Form XObject.
     ///
-    /// En Docker la librería queda en `/usr/lib/libpdfium.so` y la encuentra
-    /// sola. `PDFIUM_PATH` existe para poder correr los laboratorios fuera del
-    /// contenedor contra el mismo binario de bblanchon que usa la imagen, sin
-    /// instalar nada en el sistema.
+    /// `page.objects()` sólo devuelve los de primer nivel, y medido sobre 109
+    /// facturas reales eso deja el timbre fuera de alcance en **67 de 93**: esos
+    /// PDF muestran una sola imagen suelta —el logo— y llevan el PDF417 adentro
+    /// de un form. Sin bajar, esas 67 caían al render de página completa, que
+    /// cuesta ~232 ms contra los ~13 ms de leer el bitmap embebido.
+    ///
+    /// La profundidad va acotada porque un PDF puede anidar forms sin fondo, y
+    /// un documento hostil podría hacerlo a propósito.
+    #[cfg(feature = "pdf")]
+    fn recolectar_imagenes(
+        objetos: &pdfium_render::prelude::PdfPageObjects,
+        salida: &mut Vec<DynamicImage>,
+    ) {
+        for objeto in objetos.iter() {
+            Self::recolectar_de_objeto(&objeto, 0, salida);
+        }
+    }
+
+    #[cfg(feature = "pdf")]
+    fn recolectar_de_objeto(
+        objeto: &pdfium_render::prelude::PdfPageObject,
+        profundidad: usize,
+        salida: &mut Vec<DynamicImage>,
+    ) {
+        /// Un PDF puede anidar forms sin fondo, y uno hostil podría hacerlo a
+        /// propósito. Medido sobre el corpus, el timbre nunca pasa del primer
+        /// nivel; cuatro deja margen de sobra.
+        const MAX_PROFUNDIDAD: usize = 4;
+
+        if let Some(img) = objeto.as_image_object() {
+            if let Ok(d) = img.get_raw_image() {
+                salida.push(d);
+            }
+            return;
+        }
+        if profundidad >= MAX_PROFUNDIDAD {
+            return;
+        }
+        if let Some(form) = objeto.as_x_object_form_object() {
+            for i in form.as_range() {
+                if let Ok(hijo) = form.get(i) {
+                    Self::recolectar_de_objeto(&hijo, profundidad + 1, salida);
+                }
+            }
+        }
+    }
+
+    /// Cuántos objetos de cada clase tiene la primera página: (paths, imágenes,
+    /// textos).
+    ///
+    /// Diagnóstico, no pipeline. Sirve para una sola pregunta, que es la que
+    /// decide si vale la pena implementar el decodificador vectorial: cuando el
+    /// timbre no se lee, ¿es porque el PDF está escaneado (sin texto), o porque
+    /// el PDF417 está dibujado como miles de rectángulos en vez de como una
+    /// imagen? Son dos problemas distintos con dos soluciones distintas, y a
+    /// ojo no se distinguen.
+    #[cfg(feature = "pdf")]
+    pub fn conteo_objetos_primera_pagina(
+        &self,
+        pdf_bytes: &[u8],
+    ) -> Result<(usize, usize, usize), MediaError> {
+        let pdfium = Self::pdfium()?;
+        let documento = pdfium
+            .load_pdf_from_byte_vec(pdf_bytes.to_vec(), None)
+            .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
+        let pagina = documento
+            .pages()
+            .iter()
+            .next()
+            .ok_or_else(|| MediaError::PdfRenderError("El PDF no contiene páginas".to_string()))?;
+
+        let (mut paths, mut imagenes, mut textos) = (0, 0, 0);
+        for o in pagina.objects().iter() {
+            match o.object_type() {
+                pdfium_render::prelude::PdfPageObjectType::Path => paths += 1,
+                pdfium_render::prelude::PdfPageObjectType::Image => imagenes += 1,
+                pdfium_render::prelude::PdfPageObjectType::Text => textos += 1,
+                _ => {}
+            }
+        }
+        Ok((paths, imagenes, textos))
+    }
+
     #[cfg(feature = "pdf")]
     fn pdfium() -> Result<Pdfium, MediaError> {
         let bindings = match std::env::var("PDFIUM_PATH") {

@@ -75,9 +75,15 @@ fn main() {
         match lectura {
             Some(l) => {
                 leidos += 1;
-                if l.verificacion == Verificacion::Verificado { verificados += 1; }
+                if matches!(
+                    l.verificacion,
+                    Verificacion::Verificado | Verificacion::VerificadoConReparacion
+                ) {
+                    verificados += 1;
+                }
                 let estado = match l.verificacion {
                     Verificacion::Verificado => "✅ firma verificada",
+                    Verificacion::VerificadoConReparacion => "✅ verificada (símbolo con un carácter corrupto)",
                     Verificacion::FirmaInvalida => "⚠️  FIRMA INVÁLIDA",
                     Verificacion::SinClavePublica => "⚠️  CAF sin clave pública",
                     Verificacion::TedIncompleto => "⚠️  TED incompleto",

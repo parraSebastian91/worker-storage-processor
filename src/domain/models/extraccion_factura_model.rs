@@ -81,8 +81,15 @@ impl ExtraccionFactura {
     }
 
     /// Hay timbre con firma verificada **y** ninguna capa lo contradice.
+    ///
+    /// `VerificadoConReparacion` cuenta: la firma cuadró, y eso es prueba del
+    /// contenido. Lo que esa variante señala es un defecto del facturador, no
+    /// una duda sobre el documento.
     pub fn es_confiable(&self) -> bool {
-        self.verificacion == Some(Verificacion::Verificado) && self.discrepancias.is_empty()
+        matches!(
+            self.verificacion,
+            Some(Verificacion::Verificado) | Some(Verificacion::VerificadoConReparacion)
+        ) && self.discrepancias.is_empty()
     }
 }
 
