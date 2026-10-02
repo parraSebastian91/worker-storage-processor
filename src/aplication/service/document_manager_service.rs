@@ -1,20 +1,22 @@
-#[cfg(feature = "ocr")]
+#[cfg(feature = "pdf")]
 use std::io::Cursor;
 
-#[cfg(feature = "ocr")]
+#[cfg(feature = "pdf")]
 use image::ImageFormat;
-#[cfg(feature = "ocr")]
+#[cfg(feature = "pdf")]
 use image::DynamicImage;
 use image::{GrayImage, Luma};
-#[cfg(feature = "ocr")]
-use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
+#[cfg(feature = "pdf")]
+use pdfium_render::prelude::{PdfPageObjectsCommon, PdfRenderConfig, Pdfium};
 use regex::Regex;
 #[cfg(feature = "ocr")]
 use tesseract::Tesseract;
 
 use crate::domain::errors::media_error::MediaError;
 #[cfg(feature = "ocr")]
-use tracing::{error, info};
+use tracing::error;
+#[cfg(feature = "pdf")]
+use tracing::info;
 use crate::domain::models::factura_data_model::InvoiceData;
 
 pub struct DocumentManagerService {}
@@ -25,16 +27,15 @@ impl DocumentManagerService {
     }
 
     pub fn render_first_page_png_from_pdf(&self, pdf_bytes: &[u8]) -> Result<Vec<u8>, MediaError> {
-        #[cfg(not(feature = "ocr"))]
+        #[cfg(not(feature = "pdf"))]
         {
             let _ = pdf_bytes;
-            return Err(MediaError::OCRError(
-                "OCR no habilitado. Compila con --features ocr y asegura Tesseract/Leptonica instalados"
-                    .to_string(),
+            return Err(MediaError::PdfRenderError(
+                "Lectura de PDF no habilitada. Compila con --features pdf".to_string(),
             ));
         }
 
-        #[cfg(feature = "ocr")]
+        #[cfg(feature = "pdf")]
         {
             let page_image = self.render_first_page_image(pdf_bytes)?;
 
@@ -47,11 +48,9 @@ impl DocumentManagerService {
         }
     }
 
-    #[cfg(feature = "ocr")]
+    #[cfg(feature = "pdf")]
     fn render_first_page_image(&self, pdf_bytes: &[u8]) -> Result<DynamicImage, MediaError> {
-        let bindings = Pdfium::bind_to_system_library()
-            .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
-        let pdfium = Pdfium::new(bindings);
+        let pdfium = Self::pdfium()?;
 
         let document = pdfium
             .load_pdf_from_byte_vec(pdf_bytes.to_vec(), None)
@@ -71,6 +70,99 @@ impl DocumentManagerService {
             )
             .map_err(|e| MediaError::PdfRenderError(e.to_string()))
             .map(|bitmap| bitmap.as_image())
+    }
+
+    /// Texto **ya incorporado** en el PDF, página por página.
+    ///
+    /// Una factura electrónica generada por software trae sus campos acá, en
+    /// bytes exactos: no hay que adivinarlos con OCR. Medido sobre las 6
+    /// facturas reales, las 6 traen capa de texto y leerla cuesta decenas de
+    /// milisegundos contra los segundos que cuesta rasterizar y pasar Tesseract
+    /// (ver `docs/general/findings/cotizadores-externos/`).
+    ///
+    /// Devuelve una entrada por página en vez de un solo String a propósito: un
+    /// respaldo puede traer la factura y su orden de compra en el mismo archivo,
+    /// y mezclar las dos páginas haría que una regex se lleve el monto del
+    /// documento equivocado. Quién decide qué páginas mirar es el llamador.
+    ///
+    /// Un PDF escaneado devuelve páginas vacías o casi: eso **no es un error**,
+    /// es la señal de que hay que caer al OCR.
+    #[cfg(feature = "pdf")]
+    pub fn texto_de_capa(&self, pdf_bytes: &[u8]) -> Result<Vec<String>, MediaError> {
+        let pdfium = Self::pdfium()?;
+        let documento = pdfium
+            .load_pdf_from_byte_vec(pdf_bytes.to_vec(), None)
+            .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
+
+        let mut paginas = Vec::new();
+        for pagina in documento.pages().iter() {
+            let texto = pagina
+                .text()
+                .map(|t| t.all())
+                .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
+            paginas.push(texto);
+        }
+        info!("Capa de texto: {} página(s) leídas", paginas.len());
+        Ok(paginas)
+    }
+
+    /// Imágenes embebidas de la primera página, **a resolución nativa**.
+    ///
+    /// Para leer el timbre esto importa más de lo que parece. El PDF417 suele
+    /// venir como un bitmap de 1 bit de unos 500 px de ancho; al rasterizar la
+    /// página a 3000 px ese bitmap se interpola a ~1285 px y el suavizado
+    /// destruye los bordes de los módulos. Leyéndolo nativo no hay interpolación
+    /// y además no hay que buscar el símbolo en una hoja entera: medido, 10–31 ms
+    /// contra 2.100–2.600 ms del render de página (`analisis/08` §11).
+    ///
+    /// Vienen también los logos; el llamador prueba una por una y se queda con
+    /// la que decodifique.
+    #[cfg(feature = "pdf")]
+    pub fn imagenes_embebidas_primera_pagina(
+        &self,
+        pdf_bytes: &[u8],
+    ) -> Result<Vec<DynamicImage>, MediaError> {
+        let pdfium = Self::pdfium()?;
+        let documento = pdfium
+            .load_pdf_from_byte_vec(pdf_bytes.to_vec(), None)
+            .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
+
+        let pagina = documento
+            .pages()
+            .iter()
+            .next()
+            .ok_or_else(|| MediaError::PdfRenderError("El PDF no contiene páginas".to_string()))?;
+
+        // `get_raw_image` da el bitmap tal como está almacenado, sin aplicar la
+        // transformación de la página. Es justo lo que se quiere: cualquier
+        // escalado lo hace la página, y es lo que hay que evitar.
+        let mut imagenes = Vec::new();
+        for objeto in pagina.objects().iter() {
+            if let Some(img) = objeto.as_image_object() {
+                if let Ok(d) = img.get_raw_image() {
+                    imagenes.push(d);
+                }
+            }
+        }
+        info!("Imágenes embebidas en la primera página: {}", imagenes.len());
+        Ok(imagenes)
+    }
+
+    /// Enlaza pdfium.
+    ///
+    /// En Docker la librería queda en `/usr/lib/libpdfium.so` y la encuentra
+    /// sola. `PDFIUM_PATH` existe para poder correr los laboratorios fuera del
+    /// contenedor contra el mismo binario de bblanchon que usa la imagen, sin
+    /// instalar nada en el sistema.
+    #[cfg(feature = "pdf")]
+    fn pdfium() -> Result<Pdfium, MediaError> {
+        let bindings = match std::env::var("PDFIUM_PATH") {
+            Ok(ruta) if !ruta.is_empty() => Pdfium::bind_to_library(&ruta)
+                .map_err(|e| MediaError::PdfRenderError(format!("PDFIUM_PATH={ruta}: {e}")))?,
+            _ => Pdfium::bind_to_system_library()
+                .map_err(|e| MediaError::PdfRenderError(e.to_string()))?,
+        };
+        Ok(Pdfium::new(bindings))
     }
 
     pub fn extract_text_from_pdf(

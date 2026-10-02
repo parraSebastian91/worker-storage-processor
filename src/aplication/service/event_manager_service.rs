@@ -18,6 +18,12 @@ use crate::{
         },
     },
 };
+use crate::domain::models::extraccion_factura_model::ExtraccionFactura;
+#[cfg(all(feature = "pdf", feature = "timbre"))]
+use crate::aplication::service::{
+    extraccion_factura_service::ExtraccionFacturaService,
+    timbre_manager_service::TimbreManagerService,
+};
 use regex::Regex;
 use tracing::{debug, error, info, warn};
 pub struct EventManagerService {
@@ -42,6 +48,65 @@ fn replace_extension(storage_key: &str, new_ext: &str) -> String {
 }
 
 impl EventManagerService {
+    /// Capas 1 y 2 de la extracción: timbre firmado y capa de texto del PDF.
+    ///
+    /// Devuelve `None` cuando el worker se compiló sin `pdf`+`timbre`, o cuando
+    /// el PDF no dio nada por ninguna de las dos vías. Ese `None` no es un
+    /// error: un respaldo puede ser legítimamente una guía de despacho escaneada
+    /// sin timbre ni capa de texto, y para eso está el OCR.
+    #[cfg(all(feature = "pdf", feature = "timbre"))]
+    fn extraer_en_capas(
+        &self,
+        pdf_bytes: &[u8],
+        correlation_id: &str,
+    ) -> Option<ExtraccionFactura> {
+        let t0 = Instant::now();
+        let e = ExtraccionFacturaService::new().extraer_de_pdf(
+            pdf_bytes,
+            &self.document_manager_service,
+            &TimbreManagerService::new(),
+        );
+        let ms = t0.elapsed().as_millis();
+
+        if e == ExtraccionFactura::default() {
+            info!(
+                correlation_id = %correlation_id,
+                ms,
+                "Ni timbre ni capa de texto: el documento queda a cargo del OCR"
+            );
+            return None;
+        }
+
+        // La discrepancia se loguea como warn a propósito. No es ruido de
+        // lectura: el timbre está firmado y la capa de texto no, así que
+        // superponerle texto a la imagen de una factura real es trivial y se
+        // midió que engaña a un extractor que sólo lea el texto.
+        for d in &e.discrepancias {
+            warn!(
+                correlation_id = %correlation_id,
+                campo = %d.campo,
+                segun_timbre = %d.segun_timbre,
+                segun_texto = %d.segun_texto,
+                "El texto del PDF contradice al timbre firmado"
+            );
+        }
+
+        info!(
+            correlation_id = %correlation_id,
+            ms,
+            origen = ?e.origen_dominante(),
+            confiable = e.es_confiable(),
+            folio = ?e.folio.as_ref().map(|c| &c.valor),
+            "Extracción en capas lista"
+        );
+        Some(e)
+    }
+
+    #[cfg(not(all(feature = "pdf", feature = "timbre")))]
+    fn extraer_en_capas(&self, _pdf: &[u8], _correlation_id: &str) -> Option<ExtraccionFactura> {
+        None
+    }
+
     pub fn new(
         object_storage: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
         object_repository: Arc<dyn IObjectDBRepository>,
@@ -169,6 +234,7 @@ impl EventManagerService {
                 height: media.height,
                 headers: "Cache-Control: public, max-age=31536000".to_string(),
                 data_obtenida: chrono::Utc::now().to_rfc3339(),
+                extraccion: None,
             };
 
             let media_variant = VariantModel {
@@ -310,19 +376,37 @@ impl EventManagerService {
         //     .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
         //     .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
 
-        let invoice_data = match _payload.event.category_process.as_str() {
-            CATEGORY_PROCESS_DOCUMENT_DTO | CATEGORY_PROCESS_DOCUMENT_DTO_RESPALDO => self
-                .document_manager_service
+        let es_dte = matches!(
+            _payload.event.category_process.as_str(),
+            CATEGORY_PROCESS_DOCUMENT_DTO | CATEGORY_PROCESS_DOCUMENT_DTO_RESPALDO
+        );
+
+        // Capas 1 y 2: el timbre firmado y la capa de texto del PDF, con la
+        // procedencia de cada campo. Las dos leen el PDF original —no la imagen
+        // renderizada— y juntas cuestan decenas de milisegundos.
+        //
+        // Importa que corran ANTES del OCR y no después: el OCR tarda segundos,
+        // y para una factura electrónica generada por software no aporta nada
+        // que no esté ya en el timbre o en la capa de texto. Ver
+        // `docs/general/findings/cotizadores-externos/`.
+        let extraccion = if es_dte { self.extraer_en_capas(&document_bytes, correlation_id) } else { None };
+
+        // Capa 3: el OCR. Se sigue corriendo —es lo que alimenta el gate de
+        // publicación hoy— pero ya no es la única fuente, y cuando el timbre
+        // verificó, sus candidatos pasan a ser lo que son: candidatos.
+        let invoice_data = if es_dte {
+            self.document_manager_service
                 .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
-                .map_err(|e| HandlerError::ProcessingError(e.to_string())),
-            _ => Ok(InvoiceData {
+                .map_err(|e| HandlerError::ProcessingError(e.to_string()))?
+        } else {
+            InvoiceData {
                 numero_factura: vec![],
                 rut_deudor: vec![],
                 nombre_deudor: vec![],
                 monto_total: vec![],
                 full_text: vec![],
-            }),
-        }?;
+            }
+        };
 
         for media in processed_variants.drain(..) {
             let safe_name = _payload.event.name_file.replace(' ', "_");
@@ -351,6 +435,7 @@ impl EventManagerService {
                         e
                     ))
                 })?,
+                extraccion: extraccion.clone(),
             };
 
             let media_variant = VariantModel {

@@ -59,8 +59,23 @@ pub enum OrigenDatos {
     /// Del timbre, pero la firma no verificó. Los valores sirven para comparar,
     /// no para confiar.
     TimbreSinVerificar,
+    /// Regex sobre la capa de texto del PDF. Exacto en el sentido de que no hay
+    /// ruido de lectura —son los bytes que puso el facturador—, pero **no está
+    /// firmado**: superponerle una capa de texto a la imagen de una factura real
+    /// es trivial y se midió que engaña a cualquier extractor que la crea
+    /// (`docs/general/findings/cotizadores-externos/` §4.2). Sirve para
+    /// prellenar y para contrastar; no para decidir.
+    CapaDeTexto,
     /// Regex sobre Tesseract: candidatos, no certezas.
     Ocr,
+}
+
+impl OrigenDatos {
+    /// Orden de confianza. Sólo el timbre verificado es prueba: falsificarlo
+    /// requiere un CAF válido del SII. Lo demás es declaración.
+    pub fn es_prueba(&self) -> bool {
+        matches!(self, OrigenDatos::TimbreVerificado)
+    }
 }
 
 /// Lo que devuelve la lectura de un timbre.

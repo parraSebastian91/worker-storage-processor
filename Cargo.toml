@@ -14,9 +14,21 @@ name = "lab-timbre"
 path = "cmd/lab_timbre/main.rs"
 required-features = ["timbre"]
 
+# Laboratorio de la cascada completa (timbre + capa de texto + contraste).
+[[bin]]
+name = "lab-extraccion"
+path = "cmd/lab_extraccion/main.rs"
+required-features = ["pdf", "timbre"]
+
 [features]
 default = []
-ocr = ["dep:pdfium-render", "dep:tesseract"]
+# Lectura del PDF con pdfium: capa de texto e imágenes embebidas. Separada de
+# `ocr` por el mismo motivo por el que `timbre` lo está: `ocr` arrastra tesseract
+# y leptonica, que son librerías del sistema, y sin esta separación no se podría
+# iterar sobre la capa de texto fuera de Docker. pdfium se enlaza en runtime, no
+# en compilación, así que esta feature compila en cualquier parte.
+pdf = ["dep:pdfium-render"]
+ocr = ["pdf", "dep:tesseract"]
 # Lectura del timbre electrónico (PDF417/TED). Separada de `ocr` a propósito:
 # `ocr` arrastra tesseract y pdfium, que son librerías nativas del sistema, y
 # sin esta separación no se podría iterar sobre el timbre fuera de Docker.

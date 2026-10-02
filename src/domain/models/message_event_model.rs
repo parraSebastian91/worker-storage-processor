@@ -83,6 +83,14 @@ pub struct VariantMetadataModel {
     pub height: i32,
     pub headers: String, // Cualquier otro metadato relevante
     pub data_obtenida: String, // Fecha u otra información relevante
+    /// Extracción en capas con la procedencia de cada campo.
+    ///
+    /// Va aparte de `data_obtenida` y no la reemplaza: ese campo ya viaja a la
+    /// base y cambiarle la forma rompería a cualquiera que lo lea. Acá es
+    /// aditivo y se omite cuando no hay nada, así que un worker compilado sin
+    /// `pdf`/`timbre` produce exactamente el mismo JSON que antes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraccion: Option<crate::domain::models::extraccion_factura_model::ExtraccionFactura>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DocumentRecipeModel {
