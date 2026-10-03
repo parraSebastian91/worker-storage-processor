@@ -7,7 +7,8 @@ use crate::{
         models::{
             media_status_enum::MediaStatus::{Processing, Ready},
             message_event_model::PublishPayload,
-            MEDIA_TYPE_DOCUMENT, MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, STATE_PROCESS_READY,
+            MEDIA_TYPE_DOCUMENT, MEDIA_TYPE_IMAGE, MEDIA_TYPE_VIDEO, STATE_PROCESS_ERROR,
+            STATE_PROCESS_READY,
         },
         ports::{
             inbound::event_manager_usecase::IEventManagerUseCase,
@@ -19,7 +20,7 @@ use crate::{
     },
 };
 use async_trait::async_trait;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub struct EventManagerUseCase {
     object_storaje: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
@@ -89,15 +90,39 @@ impl IEventManagerUseCase for EventManagerUseCase {
                     .await?
             }
             MEDIA_TYPE_DOCUMENT => {
-                let extraccion = self
+                // El `?` directo acá dejaba al navegador esperando para siempre:
+                // ante un fallo se propagaba el error, el mensaje se reintentaba
+                // y terminaba en la cola de descarte, pero nadie avisaba. La
+                // fila del drawer giraba hasta que cortaba por tiempo, sin decir
+                // qué pasó.
+                //
+                // Ahora se notifica en los dos casos. Lo que falla no es la
+                // subida —el archivo está en el bucket— sino la lectura, y eso
+                // es exactamente lo que la persona necesita saber para decidir
+                // si carga los datos a mano.
+                let resultado = self
                     .event_manager_service
                     .handle_document_dte_process(_payload.clone(), true)
-                    .await?;
+                    .await;
+
+                let (extraccion, estado) = match &resultado {
+                    Ok(e) => (e.clone(), STATE_PROCESS_READY),
+                    Err(e) => {
+                        error!(
+                            correlation_id = %correlation_id,
+                            asset_id = %_payload.event.asset_id,
+                            error = %e,
+                            "Fallo el procesamiento del documento: se notifica y se deja que el mensaje reintente"
+                        );
+                        (None, STATE_PROCESS_ERROR)
+                    }
+                };
+
                 self.external_services
                     .notify_object_processed(
                         extraccion,
                         &_payload.event.category_process,
-                        STATE_PROCESS_READY,
+                        estado,
                         correlation_id,
                         &_payload.event.owner_uuid,
                         &_payload.event.gestor,
@@ -106,6 +131,11 @@ impl IEventManagerUseCase for EventManagerUseCase {
                         &_payload.event.resource_type,
                     )
                     .await;
+
+                // El error se propaga DESPUÉS de avisar: el reintento y la cola
+                // de descarte siguen funcionando igual, y el navegador ya se
+                // enteró.
+                resultado?;
             }
             _ => {
                 warn!(
