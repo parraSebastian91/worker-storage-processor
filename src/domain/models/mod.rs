@@ -1,5 +1,4 @@
 pub mod constantes_model;
-pub mod factura_data_model;
 pub mod media_status_enum;
 pub mod message_event_model;
 pub mod ted_model;

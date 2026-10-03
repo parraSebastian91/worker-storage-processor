@@ -1,5 +1,6 @@
 use crate::domain::{
-    models::factura_data_model::InvoiceData, ports::outbound::external_service::IExternalService,
+    models::extraccion_factura_model::ExtraccionFactura,
+    ports::outbound::external_service::IExternalService,
 };
 use crate::infraestructure::config::app_config::ConfiguracionGral;
 use crate::infraestructure::model::dto::payload_notify_dto::PayloadNotifyDTO;
@@ -26,7 +27,7 @@ impl ExternalServicesImpl {
 impl IExternalService for ExternalServicesImpl {
     async fn notify_object_processed(
         &self,
-        factura: InvoiceData,
+        extraccion: Option<ExtraccionFactura>,
         category: &str,
         status: &str,
         correlation_id: &str,
@@ -46,7 +47,7 @@ impl IExternalService for ExternalServicesImpl {
                 owner_uuid: owner_uuid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource_id: resource_id.to_string(),
-                payload: factura.clone(),
+                payload: extraccion.clone(),
                 gestor: gestor.to_string(),
                 asset_id: asset_id.to_string(),
             };

@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 
 /// Campos del `<DD>` del Timbre Electrónico (TED) de un DTE chileno.
 ///
-/// A diferencia de `InvoiceData` —que son *candidatos* del OCR— acá hay un solo
-/// valor por campo y es exacto: lo puso el facturador del cedente y está
-/// cubierto por la firma `<FRMT>`.
+/// Un solo valor por campo, y exacto: lo puso el facturador del cedente y está
+/// cubierto por la firma `<FRMT>`. Es lo contrario de lo que daba el OCR, que
+/// eran listas de candidatos y había que elegir.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Ted {
     /// `RE` — RUT del emisor

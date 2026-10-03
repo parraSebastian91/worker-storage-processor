@@ -17,7 +17,6 @@ use crate::domain::errors::media_error::MediaError;
 use tracing::error;
 #[cfg(feature = "pdf")]
 use tracing::{debug, info};
-use crate::domain::models::factura_data_model::InvoiceData;
 
 pub struct DocumentManagerService {}
 
@@ -491,6 +490,22 @@ impl DocumentManagerService {
         Ok(Pdfium::new(bindings))
     }
 
+    /// Texto de la primera página por OCR.
+    ///
+    /// **Último recurso, y hoy sin ningún consumidor.** Medido sobre 109
+    /// facturas reales, las 109 traen timbre firmado y las 109 traen capa de
+    /// texto, así que para una factura electrónica el OCR no aporta nada que no
+    /// esté ya en una fuente exacta.
+    ///
+    /// Lo que se eliminó fueron los extractores de campos —número, RUT, nombre y
+    /// monto por regex sobre el texto del OCR—: ésa era la parte que había que
+    /// calibrar por facturador y la que ponía datos adivinados en la base. Lo que
+    /// queda es la lectura cruda, que no depende del layout de nadie.
+    ///
+    /// Se conserva porque sigue siendo la única vía para un documento que es una
+    /// imagen y no trae timbre: una orden de compra escaneada, una guía
+    /// fotografiada. Y porque tirarlo obligaría a reescribir el teselado de la
+    /// página, que es lo caro de volver a hacer.
     pub fn extract_text_from_pdf(
         &self,
         pdf_bytes: &[u8],
@@ -518,87 +533,8 @@ impl DocumentManagerService {
         }
     }
 
-    pub fn extract_invoice_data_from_image_bytes(
-        &self,
-        image_bytes: &[u8],
-        language: &str,
-    ) -> Result<InvoiceData, MediaError> {
-        #[cfg(not(feature = "ocr"))]
-        {
-            let _ = image_bytes;
-            let _ = language;
-            return Err(MediaError::OCRError(
-                "OCR no habilitado. Compila con --features ocr".to_string(),
-            ));
-        }
 
-        #[cfg(feature = "ocr")]
-        {
-            let page_image = image::load_from_memory(image_bytes)
-                .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
-            self.extract_invoice_data_from_image(page_image, language)
-        }
-    }
 
-    /// Extrae datos estructurados de una factura DTE chilena
-    pub fn extract_invoice_data_from_pdf(
-        &self,
-        pdf_bytes: &[u8],
-        language: &str,
-    ) -> Result<InvoiceData, MediaError> {
-        #[cfg(not(feature = "ocr"))]
-        {
-            let _ = pdf_bytes;
-            let _ = language;
-            return Err(MediaError::OCRError(
-                "OCR no habilitado. Compila con --features ocr".to_string(),
-            ));
-        }
-
-        #[cfg(feature = "ocr")]
-        {
-            let page_image = self.render_first_page_image(pdf_bytes)?;
-            self.extract_invoice_data_from_image(page_image, language)
-        }
-    }
-
-    #[cfg(feature = "ocr")]
-    fn extract_invoice_data_from_image(
-        &self,
-        page_image: DynamicImage,
-        language: &str,
-    ) -> Result<InvoiceData, MediaError> {
-        // Primero extraer el texto completo desde la imagen ya renderizada
-        let full_text = self.extract_text_from_image(page_image, language)?;
-
-        // Normalizar el texto OCR en lineas individuales
-        let lines = Self::normalize_ocr_lines(&full_text);
-
-        info!("Extrayendo campos especificos de factura DTE chilena");
-        info!("Lineas OCR normalizadas: {} lineas", lines.len());
-
-        // Reconvertir a string para busquedas regex (mantiene estructura en memoria)
-        let normalized_text = lines.join("\n");
-
-        // Extraer cada campo del texto normalizado
-        let numero_factura = Self::extract_numero_factura(&normalized_text);
-        let rut_deudor = Self::extract_rut_deudor(&normalized_text);
-        let nombre_deudor = Self::extract_nombre_deudor(&normalized_text);
-        let monto_total = Self::extract_monto_total(&normalized_text);
-
-        info!(
-            "Factura: {:?}, RUT: {:?}, Deudor: {:?}, Monto: {:?}",
-            numero_factura, rut_deudor, nombre_deudor, monto_total
-        );
-
-        Ok(InvoiceData {
-            numero_factura,
-            rut_deudor,
-            nombre_deudor,
-            monto_total,
-            full_text: vec![],
-        })
-    }
 
     #[cfg(feature = "ocr")]
     fn extract_text_from_image(
@@ -755,95 +691,9 @@ impl DocumentManagerService {
         Ok(full_text)
     }
 
-    /// Extrae todos los números de factura encontrados: Nº + número
-    fn extract_numero_factura(text: &str) -> Vec<String> {
-        let re = match Regex::new(r"(?i)\bN[º°o]?\s*([0-9]{1,8})\b") {
-            Ok(r) => r,
-            Err(_) => return vec![],
-        };
-        re.captures_iter(text)
-            .filter_map(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-            .collect()
-    }
 
-    /// Extrae todos los RUTs del deudor encontrados (formato chileno: XX.XXX.XXX-K o XX.XXX.XXX-X)
-    fn extract_rut_deudor(text: &str) -> Vec<String> {
-        let rut_pattern = match Regex::new(r"(\d{1,2}\.\d{3}\.\d{3}-[\dkK])") {
-            Ok(r) => r,
-            Err(_) => return vec![],
-        };
 
-        // Buscar RUTs que estén cerca de palabras como SEÑOR, DEUDOR, etc.
-        let context_pattern = match Regex::new(
-            r"(?i)(?:DEUDOR|SEÑOR(?:ES)?(?:\s*\(ES\))?|NOMBRE)\s*(?::|\.)*\s*(\d{1,2}\.\d{3}\.\d{3}-[\dkK])",
-        ) {
-            Ok(r) => r,
-            Err(_) => return vec![],
-        };
 
-        // Primero intentar encontrar RUTs en contexto de SEÑOR/DEUDOR
-        let mut ruts: Vec<String> = context_pattern
-            .captures_iter(text)
-            .filter_map(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-            .collect();
-
-        // Si no encuentra en contexto, agregar todos los RUTs encontrados
-        if ruts.is_empty() {
-            ruts = rut_pattern
-                .captures_iter(text)
-                .filter_map(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-                .collect();
-        }
-
-        ruts
-    }
-
-    /// Extrae todos los nombres del deudor encontrados (aparecen después de SEÑOR(ES): o SEÑORES (ES):)
-    fn extract_nombre_deudor(text: &str) -> Vec<String> {
-        let patterns = vec![
-            r"(?i)SEÑOR(?:ES)?(?:\s*\(ES\))?:\s*([^:\n]+?)(?:\n|$|RUT|rut)",
-            r"(?i)SEÑORES\s*\(ES\):\s*([^:\n]+?)(?:\n|$|RUT|rut)",
-            r"(?i)NOMBRE\s*(?:DEL)?(?:\s+DEUDOR)?:\s*([^:\n]+?)(?:\n|$|RUT|rut)",
-        ];
-
-        let mut nombres = vec![];
-        for pattern_str in patterns {
-            if let Ok(re) = Regex::new(pattern_str) {
-                for caps in re.captures_iter(text) {
-                    if let Some(m) = caps.get(1) {
-                        let nombre = m.as_str().trim();
-                        if !nombre.is_empty() && nombre.len() > 2 {
-                            nombres.push(nombre.to_string());
-                        }
-                    }
-                }
-            }
-        }
-        nombres
-    }
-
-    /// Extrae todos los montos totales encontrados (aparecen después de "Total $")
-    /// Maneja confusiones de OCR: $ puede leerse como 5, S, s, 8
-    fn extract_monto_total(text: &str) -> Vec<String> {
-        let patterns = vec![
-            r"(?i)TOTAL\s+[S$5s8]\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?)",
-            r"(?i)TOTAL\s*:\s*[S$5s8]\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?)",
-            r"(?i)MONTO\s+TOTAL\s+[S$5s8]\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{2})?)",
-        ];
-
-        let mut montos = vec![];
-        for pattern_str in patterns {
-            if let Ok(re) = Regex::new(pattern_str) {
-                for caps in re.captures_iter(text) {
-                    if let Some(m) = caps.get(1) {
-                        let monto = m.as_str().trim().replace('.', "");
-                        montos.push(monto);
-                    }
-                }
-            }
-        }
-        montos
-    }
 
     fn to_binary(gray: GrayImage, threshold: u8) -> GrayImage {
         let (w, h) = gray.dimensions();
@@ -859,47 +709,5 @@ impl DocumentManagerService {
         out
     }
 
-    fn normalize_numero_variants(input: &str) -> String {
-        let re = match Regex::new(r"(?i)\bN\s*(?:[º°oO]|o)?\s*([0-9]{1,8})\b") {
-            Ok(v) => v,
-            Err(_) => return input.to_string(),
-        };
-        re.replace_all(input, "Nº$1").to_string()
-    }
 
-    /// Normaliza líneas individuales de OCR manteniendo la estructura de array
-    /// Cada línea se normaliza por separado, evitando expansión de texto
-    fn normalize_ocr_lines(input: &str) -> Vec<String> {
-        input
-            .lines()
-            .map(|line| {
-                let normalized = line.trim();
-
-                // Manejar confusiones comunes de OCR
-                let normalized = normalized
-                    .replace("seÑor", "señor")
-                    .replace("seNor", "señor")
-                    .replace("SENOR", "SEÑOR");
-
-                // Limpiar espacios alrededor de puntuación
-                let normalized = normalized
-                    .replace(" :", ":")
-                    .replace(": ", ":")
-                    .replace(" ,", ",")
-                    .replace(" .", ".")
-                    .replace(". ", ".")
-                    .replace(" - ", "-")
-                    .replace(" -", "-")
-                    .replace("- ", "-");
-
-                // Limpiar espacios múltiples dentro de la línea
-                let re_spaces = match Regex::new(r"\s+") {
-                    Ok(re) => re,
-                    Err(_) => return normalized,
-                };
-                re_spaces.replace_all(&normalized, " ").to_string()
-            })
-            .filter(|line| !line.is_empty()) // Descartar líneas vacías
-            .collect()
-    }
 }

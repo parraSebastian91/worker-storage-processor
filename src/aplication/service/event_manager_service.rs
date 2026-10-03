@@ -8,7 +8,7 @@ use crate::{
     domain::{
         errors::handler_error::HandlerError,
         models::{
-            CATEGORY_PROCESS_DOCUMENT_DTO, constantes_model::{CATEGORY_PROCESS_DOCUMENT_DTO_RESPALDO, CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER}, factura_data_model::InvoiceData, message_event_model::{
+            CATEGORY_PROCESS_DOCUMENT_DTO, constantes_model::{CATEGORY_PROCESS_DOCUMENT_AE, CATEGORY_PROCESS_DOCUMENT_DTO_RESPALDO, CATEGORY_PROCESS_DOCUMENT_EP, CATEGORY_PROCESS_DOCUMENT_GD, CATEGORY_PROCESS_DOCUMENT_HES, CATEGORY_PROCESS_DOCUMENT_OC, CATEGORY_PROCESS_USER_AVATAR, CATEGORY_PROCESS_USER_BANNER}, message_event_model::{
                 PublishPayload, Recipe, RecipeMediaModel, VariantMetadataModel, VariantModel,
             }
         },
@@ -280,7 +280,7 @@ impl EventManagerService {
         &self,
         _payload: PublishPayload,
         private: bool,
-    ) -> Result<InvoiceData, HandlerError> {
+    ) -> Result<Option<ExtraccionFactura>, HandlerError> {
         let started_at = Instant::now();
         let correlation_id = _payload.correlation_id.as_deref().unwrap_or("n/a");
 
@@ -371,42 +371,43 @@ impl EventManagerService {
         };
 
         // Extraer datos estructurados de la factura
-        // let invoice_data = self
-        //     .document_manager_service
-        //     .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
-        //     .map_err(|e| HandlerError::ProcessingError(e.to_string()))?;
-
-        let es_dte = matches!(
+        // Todo documento que pueda llevar datos de una operación pasa por la
+        // cascada, no sólo las facturas.
+        //
+        // Antes corría sólo para `DTE-factura` y `DTE-factura-respaldo`, que es
+        // justo donde el timbre ya cubre el 100%. Las cinco categorías que NUNCA
+        // van a tener timbre —orden de compra, acta de entrega, estado de pago,
+        // hoja de entrada de servicio— no lo tocaban nunca, y son las únicas
+        // donde la capa de texto es la única fuente que hay.
+        //
+        // (`guia-despacho` es DTE tipo 52: sí lleva timbre, aunque no sea
+        // cedible, así que la cascada la cubre igual.)
+        let lleva_datos = matches!(
             _payload.event.category_process.as_str(),
-            CATEGORY_PROCESS_DOCUMENT_DTO | CATEGORY_PROCESS_DOCUMENT_DTO_RESPALDO
+            CATEGORY_PROCESS_DOCUMENT_DTO
+                | CATEGORY_PROCESS_DOCUMENT_DTO_RESPALDO
+                | CATEGORY_PROCESS_DOCUMENT_OC
+                | CATEGORY_PROCESS_DOCUMENT_GD
+                | CATEGORY_PROCESS_DOCUMENT_AE
+                | CATEGORY_PROCESS_DOCUMENT_EP
+                | CATEGORY_PROCESS_DOCUMENT_HES
         );
 
-        // Capas 1 y 2: el timbre firmado y la capa de texto del PDF, con la
-        // procedencia de cada campo. Las dos leen el PDF original —no la imagen
-        // renderizada— y juntas cuestan decenas de milisegundos.
+        // Timbre firmado y capa de texto, con la procedencia de cada campo. Las
+        // dos leen el PDF original —no la imagen renderizada— y juntas cuestan
+        // decenas de milisegundos.
         //
-        // Importa que corran ANTES del OCR y no después: el OCR tarda segundos,
-        // y para una factura electrónica generada por software no aporta nada
-        // que no esté ya en el timbre o en la capa de texto. Ver
-        // `docs/general/findings/cotizadores-externos/`.
-        let extraccion = if es_dte { self.extraer_en_capas(&document_bytes, correlation_id) } else { None };
-
-        // Capa 3: el OCR. Se sigue corriendo —es lo que alimenta el gate de
-        // publicación hoy— pero ya no es la única fuente, y cuando el timbre
-        // verificó, sus candidatos pasan a ser lo que son: candidatos.
-        let invoice_data = if es_dte {
-            self.document_manager_service
-                .extract_invoice_data_from_image_bytes(&rendered_image_bytes, &language)
-                .map_err(|e| HandlerError::ProcessingError(e.to_string()))?
+        // El OCR ya no participa: sus extractores de campos se eliminaron porque
+        // eran la parte que había que calibrar por facturador y la que ponía
+        // datos adivinados en la base. La lectura cruda sigue disponible en
+        // `DocumentManagerService` para cuando aparezca un uso que la justifique.
+        // Ver `docs/general/findings/cotizadores-externos/`.
+        let extraccion = if lleva_datos {
+            self.extraer_en_capas(&document_bytes, correlation_id)
         } else {
-            InvoiceData {
-                numero_factura: vec![],
-                rut_deudor: vec![],
-                nombre_deudor: vec![],
-                monto_total: vec![],
-                full_text: vec![],
-            }
+            None
         };
+        let _ = &language;
 
         for media in processed_variants.drain(..) {
             let safe_name = _payload.event.name_file.replace(' ', "_");
@@ -429,9 +430,9 @@ impl EventManagerService {
                 width: media.width,
                 height: media.height,
                 headers: "Cache-Control: public, max-age=31536000".to_string(),
-                data_obtenida: serde_json::to_string(&invoice_data).map_err(|e| {
+                data_obtenida: serde_json::to_string(&extraccion).map_err(|e| {
                     HandlerError::ProcessingError(format!(
-                        "No se pudo serializar invoice_data: {}",
+                        "No se pudo serializar la extracción: {}",
                         e
                     ))
                 })?,
@@ -453,11 +454,11 @@ impl EventManagerService {
 
         debug!(
             correlation_id = %correlation_id,
-            numero_factura = ?invoice_data.numero_factura,
-            rut_deudor = ?invoice_data.rut_deudor,
-            nombre_deudor = ?invoice_data.nombre_deudor,
-            monto_total = ?invoice_data.monto_total,
-            "Datos de factura extraídos exitosamente"
+            folio = ?extraccion.as_ref().and_then(|e| e.folio.as_ref().map(|c| &c.valor)),
+            rut_deudor = ?extraccion.as_ref().and_then(|e| e.rut_deudor.as_ref().map(|c| &c.valor)),
+            monto_total = ?extraccion.as_ref().and_then(|e| e.monto_total.as_ref().map(|c| &c.valor)),
+            origen = ?extraccion.as_ref().and_then(|e| e.origen_dominante()),
+            "Datos de la factura extraídos"
         );
 
         // Guardar texto completo de OCR
@@ -538,7 +539,7 @@ impl EventManagerService {
             "Procesamiento OCR de documento completado"
         );
 
-        Ok(invoice_data)
+        Ok(extraccion)
     }
 
     pub async fn handle_other_process(&self, _payload: PublishPayload) -> Result<(), HandlerError> {

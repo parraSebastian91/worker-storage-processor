@@ -89,13 +89,13 @@ impl IEventManagerUseCase for EventManagerUseCase {
                     .await?
             }
             MEDIA_TYPE_DOCUMENT => {
-                let factura_procesada = self
+                let extraccion = self
                     .event_manager_service
                     .handle_document_dte_process(_payload.clone(), true)
                     .await?;
                 self.external_services
                     .notify_object_processed(
-                        factura_procesada,
+                        extraccion,
                         &_payload.event.category_process,
                         STATE_PROCESS_READY,
                         correlation_id,
