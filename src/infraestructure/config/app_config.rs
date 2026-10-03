@@ -52,10 +52,16 @@ pub struct CacheConfig {
 #[derive(Debug, Clone, Deserialize)]
 
 pub struct StorageBucketConfig {
-    pub public_original: String,
-    pub private_original: String,
-    pub public_processed: String,
-    pub private_processed: String,
+    /// Avatares, banners y logos: el único contenido de acceso abierto.
+    pub public: String,
+    /// Facturas, respaldos y lo que el worker genere a partir de ellos. Nada de
+    /// esto se sirve sin sesión — el visor pasa por el BFF, que valida permisos.
+    ///
+    /// Antes eran cuatro buckets: público/privado × original/procesado. El
+    /// segundo eje existía porque el worker convertía los PDF a imagen para el
+    /// OCR, y no aporta control de acceso: el bucket es la unidad de permiso en
+    /// S3. La etapa del objeto se expresa en la key.
+    pub private: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -107,7 +113,11 @@ impl AppConfig {
             exchange: env::var("RABBITMQ_EXCHANGE_TASK")
                 .or_else(|_| env::var("RABBITMQ_EXCHANGE_TASK"))
                 .unwrap_or_else(|_| "".to_string()),
-            routing_key: env::var("RABBITMQ_KEY_MEDIA_IMAGE_RESIZE").unwrap_or_else(|_| "".to_string()),
+            // `RABBITMQ_ROUTING_KEY`, no `RABBITMQ_KEY_MEDIA_IMAGE_RESIZE`: este
+            // worker procesa DOCUMENTOS, y leer la clave de redimensionar
+            // imágenes lo dejaba ligado a la cola equivocada (o a ninguna).
+            routing_key: env::var("RABBITMQ_ROUTING_KEY")
+                .unwrap_or_else(|_| "media.document.upload".to_string()),
             max_retries: env::var("QUEUE_MAX_RETRIES")
                 .unwrap_or_else(|_| "5".to_string())
                 .parse()
@@ -136,19 +146,11 @@ impl AppConfig {
         };
 
         let bucket_config = StorageBucketConfig {
-            public_original: env::var("STORAGE_BUCKET_PUBLIC_ORIGINAL").map_err(|_| {
-                ConfigError::MissingEnvVar("STORAGE_BUCKET_PUBLIC_ORIGINAL is not set".to_string())
+            public: env::var("STORAGE_BUCKET_PUBLIC").map_err(|_| {
+                ConfigError::MissingEnvVar("STORAGE_BUCKET_PUBLIC is not set".to_string())
             })?,
-            private_original: env::var("STORAGE_BUCKET_PRIVATE_ORIGINAL").map_err(|_| {
-                ConfigError::MissingEnvVar("STORAGE_BUCKET_PRIVATE_ORIGINAL is not set".to_string())
-            })?,
-            public_processed: env::var("STORAGE_BUCKET_PUBLIC_PROCESSED").map_err(|_| {
-                ConfigError::MissingEnvVar("STORAGE_BUCKET_PUBLIC_PROCESSED is not set".to_string())
-            })?,
-            private_processed: env::var("STORAGE_BUCKET_PRIVATE_PROCESSED").map_err(|_| {
-                ConfigError::MissingEnvVar(
-                    "STORAGE_BUCKET_PRIVATE_PROCESSED is not set".to_string(),
-                )
+            private: env::var("STORAGE_BUCKET_PRIVATE").map_err(|_| {
+                ConfigError::MissingEnvVar("STORAGE_BUCKET_PRIVATE is not set".to_string())
             })?,
         };
 

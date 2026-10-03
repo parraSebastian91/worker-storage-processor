@@ -20,7 +20,7 @@ impl IObjectStorageRepository for MinioClientAdapter {
         private: bool,
     ) -> Result<(), RepositoryError> {
         let data = SegmentedBytes::from(Bytes::from(_data));
-        let bucket = if private { &self.bucket().private_processed } else { &self.bucket().public_processed };
+        let bucket = if private { &self.bucket().private } else { &self.bucket().public };
         debug!("Subiendo archivo a Minio: bucket={}, key={}", bucket, _key);
         let _resp: PutObjectResponse = self
             .client()
@@ -37,7 +37,7 @@ impl IObjectStorageRepository for MinioClientAdapter {
         _key: &str,
         private: bool,
     ) -> Result<Vec<u8>, RepositoryError> {
-        let bucket = if private { &self.bucket().private_original } else { &self.bucket().public_original };
+        let bucket = if private { &self.bucket().private } else { &self.bucket().public };
         debug!("Descargando archivo de Minio: bucket={}, key={}", bucket, _key);
         let resp: GetObjectResponse = self
             .client()
@@ -57,7 +57,7 @@ impl IObjectStorageRepository for MinioClientAdapter {
 
     async fn delete_file(&self, _bucket: &str, _key: &str, private: bool) -> Result<(), RepositoryError> {
         // Implementación de eliminación de archivo en Minio
-        let bucket = if private { &self.bucket().private_original } else { &self.bucket().public_original };
+        let bucket = if private { &self.bucket().private } else { &self.bucket().public };
         self.client()
             .delete_object(bucket, _key)
             .send()
@@ -68,7 +68,7 @@ impl IObjectStorageRepository for MinioClientAdapter {
 
     async fn exists_file(&self, _bucket: &str, _key: &str, private: bool) -> Result<bool, RepositoryError> {
         // Implementación de verificación de existencia de archivo en Minio
-        let bucket = if private { &self.bucket().private_original } else { &self.bucket().public_original };
+        let bucket = if private { &self.bucket().private } else { &self.bucket().public };
         match self.client().stat_object(bucket, _key).send().await {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),

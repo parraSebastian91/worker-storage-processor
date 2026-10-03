@@ -47,10 +47,11 @@ load_storage_minio(){
     export MINIO_ACCESS_KEY=$(vault_get "$path" "MINIO_ROOT_USER")
     export MINIO_SECRET_KEY=$(vault_get "$path" "MINIO_ROOT_PASSWORD")
     export MINIO_URL_BASE=$(vault_get "$path" "MINIO_ENDPOINT")
-    export STORAGE_BUCKET_PUBLIC_ORIGINAL="${STORAGE_BUCKET_PUBLIC_ORIGINAL:-seis-app-public-original}"
-    export STORAGE_BUCKET_PUBLIC_PROCESSED="${STORAGE_BUCKET_PUBLIC_PROCESSED:-seis-app-public-processed}"
-    export STORAGE_BUCKET_PRIVATE_ORIGINAL="${STORAGE_BUCKET_PRIVATE_ORIGINAL:-seis-app-private-original}"
-    export STORAGE_BUCKET_PRIVATE_PROCESSED="${STORAGE_BUCKET_PRIVATE_PROCESSED:-seis-app-private-processed}"
+    # Dos buckets, partidos por quién puede ver el objeto. El eje
+    # original/procesado se eliminó: no aporta control de acceso —el bucket es
+    # la unidad de permiso en S3— y la etapa del objeto va en la key.
+    export STORAGE_BUCKET_PUBLIC="${STORAGE_BUCKET_PUBLIC:-seis-app-public}"
+    export STORAGE_BUCKET_PRIVATE="${STORAGE_BUCKET_PRIVATE:-seis-app-private}"
 }
 
 load_rabbit_env(){
@@ -61,8 +62,27 @@ load_rabbit_env(){
     local user=$(vault_get "secret/data/flowis/$SERVICE_NAME" "RABBITMQ_USER")
     local pass=$(vault_get "secret/data/flowis/$SERVICE_NAME" "RABBITMQ_PASS")
     export RABBITMQ_URL="amqp://${user}:${pass}@${host}:${port}/%2f"
-    export RABBITMQ_QUEUE=$(vault_get "$path" "RABBITMQ_QUEUE")
-    export RABBITMQ_EXCHANGE_TASK=$(vault_get "$path" "RABBITMQ_EXCHANGE")
+    # El exchange DE TRABAJO. En Vault, `RABBITMQ_EXCHANGE` es el de
+    # NOTIFICACIONES (`storage_notifications_exchange`), que es el canal de
+    # vuelta hacia el navegador. El worker consume del de tareas, donde el
+    # orquestador publica lo que hay que procesar.
+    local exch=$(vault_get "$path" "RABBITMQ_EXCHANGE_TASK")
+    export RABBITMQ_EXCHANGE_TASK="${exch:-storage_tasks_exchange}"
+
+    # La cola DE TRABAJO y su routing key.
+    #
+    # Vault tenía `notify_queue`, que es la cola de NOTIFICACIONES —la que
+    # consume el BFF para avisarle al navegador— no la de trabajo. Con eso el
+    # worker escuchaba el canal equivocado: el orquestador publicaba en
+    # `storage_tasks_exchange` con la clave `media.document.upload`, ese exchange
+    # no tenía ningún binding, y RabbitMQ descartaba cada mensaje en silencio.
+    #
+    # Se toma de Vault si está, y si no se usa el valor correcto. El worker
+    # declara y liga la cola al arrancar, así que no hace falta crearla a mano.
+    local cola=$(vault_get "$path" "RABBITMQ_QUEUE_DOCUMENT")
+    export RABBITMQ_QUEUE="${cola:-media_document_queue}"
+    local clave=$(vault_get "$path" "RABBITMQ_KEY_MEDIA_DOCUMENT_UPLOAD")
+    export RABBITMQ_ROUTING_KEY="${clave:-media.document.upload}"
 }
 
 load_service_env(){

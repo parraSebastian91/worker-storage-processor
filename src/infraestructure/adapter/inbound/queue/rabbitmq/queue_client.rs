@@ -21,6 +21,7 @@ impl RabbitMQConsumerImpl {
         url: &str,
         exchange: &str,
         queue_name: &str,
+        routing_key: &str,
         prefetch_count: u16,
         max_retries: u32,
     ) -> Result<Self, QueueError> {
@@ -42,12 +43,93 @@ impl RabbitMQConsumerImpl {
             .await
             .map_err(|e| QueueError::ConnectionError(e.to_string()))?;
 
+        Self::declarar_topologia(&channel, exchange, queue_name, routing_key).await?;
+
         Ok(Self {
             channel,
             exchange_name: exchange.to_string(),
             queue_name: queue_name.to_string(),
             max_retries, // Aquí puedes establecer un valor predeterminado o pasarlo como parámetro
         })
+    }
+
+    /// Declara el exchange, la cola de trabajo, su cola de descarte, y las liga.
+    ///
+    /// La declara el CONSUMIDOR y no el productor: el worker es quien sabe qué
+    /// necesita recibir, y así el sistema se autoconfigura al arrancar en vez de
+    /// depender de que alguien haya corrido un script. Medido antes de esto:
+    /// `storage_tasks_exchange` no tenía NINGÚN binding, así que el orquestador
+    /// publicaba al vacío y RabbitMQ descartaba cada mensaje en silencio — el
+    /// archivo se subía, el webhook llegaba, y el worker nunca se enteraba.
+    ///
+    /// Todo es idempotente: declarar algo que ya existe con los mismos
+    /// argumentos no hace nada.
+    async fn declarar_topologia(
+        channel: &Channel,
+        exchange: &str,
+        queue_name: &str,
+        routing_key: &str,
+    ) -> Result<(), QueueError> {
+        if exchange.is_empty() || routing_key.is_empty() {
+            warn!(
+                exchange,
+                routing_key,
+                "Sin exchange o routing key: se consume la cola tal como esté, sin declarar nada"
+            );
+            return Ok(());
+        }
+
+        let dlx = format!("{exchange}.dlx");
+        let dlq = format!("{queue_name}.dead");
+        let durable = ExchangeDeclareOptions { durable: true, ..Default::default() };
+        let cola = QueueDeclareOptions { durable: true, ..Default::default() };
+        let err = |e: lapin::Error| QueueError::ConnectionError(e.to_string());
+
+        // El de trabajo es `topic` porque el orquestador rutea por clave
+        // (`media.document.upload`, `media.image.resize`…). El de descarte es
+        // `fanout`: ahí no hay nada que rutear, todo lo que cae va al mismo lado.
+        for (nombre, tipo) in [
+            (exchange, lapin::ExchangeKind::Topic),
+            (dlx.as_str(), lapin::ExchangeKind::Fanout),
+        ] {
+            channel
+                .exchange_declare(nombre, tipo, durable, FieldTable::default())
+                .await
+                .map_err(err)?;
+        }
+
+        // La cola de descarte. Lo que agota sus reintentos termina acá en vez de
+        // evaporarse: antes, al llegar al máximo, el worker logueaba "Publicando
+        // mensaje de aborto" y hacía `nack(requeue=false)`, o sea que descartaba
+        // el mensaje sin dejar rastro. El log afirmaba algo que no ocurría.
+        channel.queue_declare(&dlq, cola, FieldTable::default()).await.map_err(err)?;
+        channel
+            .queue_bind(&dlq, &dlx, "", QueueBindOptions::default(), FieldTable::default())
+            .await
+            .map_err(err)?;
+
+        // La cola de trabajo, apuntando su descarte al DLX.
+        //
+        // Los argumentos de una cola son INMUTABLES: si existiera ya sin
+        // `x-dead-letter-exchange`, esta declaración falla con PRECONDITION_FAILED
+        // y hay que borrarla a mano. Por eso se declara con su DLX desde el
+        // principio y no "más adelante".
+        let mut args = FieldTable::default();
+        args.insert("x-dead-letter-exchange".into(), AMQPValue::LongString(dlx.clone().into()));
+        channel.queue_declare(queue_name, cola, args).await.map_err(err)?;
+        channel
+            .queue_bind(queue_name, exchange, routing_key, QueueBindOptions::default(), FieldTable::default())
+            .await
+            .map_err(err)?;
+
+        info!(
+            exchange,
+            queue = queue_name,
+            routing_key,
+            dead_letter = %dlq,
+            "Topología de la cola declarada"
+        );
+        Ok(())
     }
 
     pub fn get_headers(delivery: &Delivery) -> HashMap<String, String> {

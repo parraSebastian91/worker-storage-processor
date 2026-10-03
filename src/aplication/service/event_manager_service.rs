@@ -411,8 +411,11 @@ impl EventManagerService {
 
         for media in processed_variants.drain(..) {
             let safe_name = _payload.event.name_file.replace(' ', "_");
+            // Sin prefijo `public/`: esta key va al bucket privado, y decir
+            // "public" en la ruta es una trampa para el próximo que escriba una
+            // política por prefijo creyendo lo que lee.
             let key_object = format!(
-                "public/documents/{}/{}/{}-{}.{}",
+                "documents/{}/{}/{}-{}.{}",
                 _payload.event.owner_uuid,
                 _payload.event.category_process,
                 safe_name,

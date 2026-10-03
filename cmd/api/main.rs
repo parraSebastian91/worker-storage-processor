@@ -161,6 +161,7 @@ async fn init_queue_client(config: &AppConfig) -> anyhow::Result<Arc<dyn IQueueC
         &queue_config.url,
         &queue_config.exchange,
         &queue_config.queue,
+        &queue_config.routing_key,
         queue_config.prefetch_count,
         queue_config.max_retries,
     )

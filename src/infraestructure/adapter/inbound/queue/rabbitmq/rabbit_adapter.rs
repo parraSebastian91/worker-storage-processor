@@ -161,11 +161,19 @@ impl IQueueConsumer for RabbitMQConsumerImpl {
                                     }
                                 }
                             } else {
-                                info!(
-                                    "Máximo de reintentos alcanzado. Publicando mensaje de aborto."
+                                // `nack(requeue=false)` con la cola declarada con
+                                // `x-dead-letter-exchange` manda el mensaje a la
+                                // cola de descarte. Antes el log decía "Publicando
+                                // mensaje de aborto" y no publicaba nada: sin DLX,
+                                // este mismo nack lo descartaba sin dejar rastro.
+                                error!(
+                                    correlation_id = &correlation_id,
+                                    asset_id = %asset_id,
+                                    error = %e,
+                                    "Máximo de reintentos alcanzado: el mensaje va a la cola de descarte"
                                 );
                                 if let Err(nack_err) = self.nack(delivery_tag, false).await {
-                                    error!("Error haciendo NACK de fallback: {}", nack_err);
+                                    error!("Error haciendo NACK hacia la cola de descarte: {}", nack_err);
                                 }
                             }
                         }
