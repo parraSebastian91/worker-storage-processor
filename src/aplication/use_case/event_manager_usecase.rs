@@ -19,7 +19,7 @@ use crate::{
     },
 };
 use async_trait::async_trait;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct EventManagerUseCase {
     object_storaje: HashMap<String, Arc<dyn IObjectStorageRepository + Send + Sync>>,
@@ -128,16 +128,38 @@ impl IEventManagerUseCase for EventManagerUseCase {
 
         // let final_path = format!("`profile-pictures/{}/{}/%s-%s.%s`", _payload.event.storage_key);
 
-        self.event_manager_service
-            .delete_object_temp("", &_payload.event.storage_key)
-            .await
-            .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
-        info!(
-            correlation_id = %correlation_id,
-            asset_id = %_payload.event.asset_id,
-            storage_key = %_payload.event.storage_key,
-            "Objeto temporal eliminado"
-        );
+        // Sólo se borra lo que de verdad era temporal.
+        //
+        // El modelo original era "subir a /temp, procesar, borrar el original",
+        // que para un avatar está bien: lo que importa son las variantes. Para
+        // una factura es lo contrario — el PDF **es la prueba**: lleva el timbre
+        // firmado, es lo que la ejecutiva tiene que poder mirar antes de
+        // financiar, y es lo único con lo que se puede re-verificar después.
+        //
+        // Además rompía el reintento: el primer intento procesaba y borraba, y
+        // todos los siguientes fallaban con NoSuchKey hasta agotar los
+        // reintentos y caer en la cola de descarte. El síntoma era un archivo
+        // que "desaparecía" convertido en .webp.
+        let es_temporal = _payload.event.storage_key.contains("/temp");
+        if es_temporal {
+            self.event_manager_service
+                .delete_object_temp("", &_payload.event.storage_key)
+                .await
+                .map_err(|e| HandlerError::RepositoryError(e.to_string()))?;
+            info!(
+                correlation_id = %correlation_id,
+                asset_id = %_payload.event.asset_id,
+                storage_key = %_payload.event.storage_key,
+                "Objeto temporal eliminado"
+            );
+        } else {
+            debug!(
+                correlation_id = %correlation_id,
+                asset_id = %_payload.event.asset_id,
+                storage_key = %_payload.event.storage_key,
+                "El original se conserva: no está en un área temporal"
+            );
+        }
 
         let storage_key_final = _payload
             .event
