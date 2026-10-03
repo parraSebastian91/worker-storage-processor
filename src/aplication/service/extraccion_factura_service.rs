@@ -405,6 +405,19 @@ impl ExtraccionFacturaService {
                 return Some(l);
             }
         }
+
+        // Timbre dibujado como miles de rectángulos en vez de como imagen. Va
+        // antes del render de página porque es más barato (3–6 ms contra ~230) y
+        // porque para el facturador que lo usa el render NO funciona a ninguna
+        // resolución: sus módulos se dibujan más angostos que su celda, así que
+        // las corridas de módulos vecinos salen separadas y PDF417 codifica
+        // justamente en el ancho de las corridas.
+        if let Ok(Some(simbolo)) = documentos.simbolo_vectorial_primera_pagina(pdf_bytes) {
+            if let Some(l) = timbres.leer(&simbolo) {
+                return Some(l);
+            }
+        }
+
         let png = documentos.render_first_page_png_from_pdf(pdf_bytes).ok()?;
         let img = image::load_from_memory(&png).ok()?;
         timbres.leer(&img)

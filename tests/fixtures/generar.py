@@ -97,6 +97,49 @@ def guardar_con_simbolo_corrupto(nombre: str, ted: str, de: str, a: str):
     print(f"  {nombre:24} {len(datos):5} bytes, símbolo con {de!r} → {a!r}")
 
 
+def guardar_pdf_vectorial(nombre: str, ted: str):
+    """Dibuja el timbre como rectángulos en un PDF, con el defecto real medido.
+
+    Hay facturadores que no embeben el PDF417 como imagen sino que pintan cada
+    módulo oscuro como su propio rectángulo. Y lo pintan **más angosto que su
+    celda**: medido, módulos de 0,374 pt de ancho ubicados cada 0,5025. Esa
+    ranura blanca hace que una corrida de módulos vecinos se imprima como barras
+    separadas, y PDF417 codifica justamente en el ancho de las corridas — así que
+    el símbolo impreso no decodifica a NINGUNA resolución.
+
+    Acá se reproduce exacto: el bitmap de 1 px por módulo dice qué celdas van
+    oscuras, y cada una se dibuja angosta y separada.
+    """
+    from reportlab.pdfgen import canvas
+
+    datos = ted.encode("ISO-8859-1")
+    (AQUI / f"{nombre}.ted.txt").write_bytes(datos)
+
+    codes = encode(datos, columns=12, security_level=5, encoding="iso-8859-1")
+    matriz = render_image(codes, scale=1, ratio=1, padding=0).convert("L")
+    cols, filas = matriz.size
+
+    PASO_X, ANCHO = 0.5025, 0.374      # el módulo se dibuja más angosto que su celda
+    PASO_Y, ALTO = 1.008, 0.878
+    X0, Y0 = 60.0, 500.0
+
+    c = canvas.Canvas(str(AQUI / f"{nombre}.pdf"), pagesize=(612, 792))
+    c.setFillColorRGB(0, 0, 0)
+    px = matriz.load()
+    oscuros = 0
+    for f in range(filas):
+        for x in range(cols):
+            if px[x, f] < 128:
+                c.rect(X0 + x * PASO_X, Y0 - f * PASO_Y, ANCHO, ALTO, stroke=0, fill=1)
+                oscuros += 1
+    # Algo de ruido alrededor, como tiene cualquier factura: líneas de formulario
+    # que NO son módulos y que la detección tiene que descartar.
+    c.rect(50, 700, 500, 0.8, stroke=0, fill=1)
+    c.rect(50, 650, 500, 0.8, stroke=0, fill=1)
+    c.save()
+    print(f"  {nombre+'.pdf':24} {cols}x{filas} módulos, {oscuros} rectángulos")
+
+
 if __name__ == "__main__":
     # Caso feliz, con ñ y acentos: los bytes que se corrompen si se lee UTF-8.
     ok = armar_ted(128, "PEÑALOLÉN DISTRIBUCIÓN LTDA", 1250500,
@@ -120,5 +163,10 @@ if __name__ == "__main__":
         "Nº2",
         "N]2",
     )
+
+    # Timbre dibujado como rectángulos, con los módulos más angostos que su
+    # celda: el defecto que ninguna resolución de render arregla.
+    guardar_pdf_vectorial("vectorial", armar_ted(1726, "BESALCO PIQUES Y TUNELES S.A.", 252280,
+                                                 "Monomando lavaplatos", pretty=False))
 
     print("\nlisto. Los .ted.txt son el original, para comparar byte a byte.")

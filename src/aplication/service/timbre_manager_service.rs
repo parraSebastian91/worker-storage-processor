@@ -157,15 +157,32 @@ impl TimbreManagerService {
 
     fn parsear_dd(dd: &str) -> Option<Ted> {
         Some(Ted {
-            rut_emisor: Self::contenido(dd, "RE")?.trim().to_string(),
+            rut_emisor: Self::texto(Self::contenido(dd, "RE")?),
             tipo_dte: Self::contenido(dd, "TD")?.trim().parse().ok()?,
             folio: Self::contenido(dd, "F")?.trim().parse().ok()?,
-            fecha_emision: Self::contenido(dd, "FE")?.trim().to_string(),
-            rut_receptor: Self::contenido(dd, "RR")?.trim().to_string(),
-            razon_social_receptor: Self::contenido(dd, "RSR")?.trim().to_string(),
+            fecha_emision: Self::texto(Self::contenido(dd, "FE")?),
+            rut_receptor: Self::texto(Self::contenido(dd, "RR")?),
+            razon_social_receptor: Self::texto(Self::contenido(dd, "RSR")?),
             monto_total: Self::contenido(dd, "MNT")?.trim().parse().ok()?,
-            primer_item: Self::contenido(dd, "IT1").map(|s| s.trim().to_string()),
+            primer_item: Self::contenido(dd, "IT1").map(Self::texto),
         })
+    }
+
+    /// El valor de un campo, con las entidades XML resueltas.
+    ///
+    /// Va DESPUÉS de verificar la firma, nunca antes: la firma cubre los bytes
+    /// tal como viajan, con `&amp;` y todo. Lo que se desescapa es sólo lo que
+    /// se muestra — una razón social que diga "MUELLE MELBOURNE &amp;amp; CLARK"
+    /// está mal, y ese nombre termina en pantalla y en la base.
+    fn texto(bruto: &str) -> String {
+        bruto
+            .trim()
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            // `&amp;` al final: si no, "&amp;lt;" se convertiría en "<".
+            .replace("&amp;", "&")
     }
 
     /// Verifica el `<FRMT>` contra la clave pública del `<CAF>` embebido.
@@ -263,41 +280,103 @@ impl TimbreManagerService {
         (Verificacion::SinClavePublica, None)
     }
 
-    /// Busca el DD original cuando el símbolo impreso trae un carácter corrupto.
+    /// Busca el DD original cuando el símbolo impreso no coincide con lo firmado.
     ///
-    /// Por qué hace falta: el modo texto de PDF417 sólo representa un subconjunto
-    /// ASCII. Un facturador cuyo encoder no cambia a modo byte ante un `º`
-    /// imprime en su lugar algún carácter de la tabla de puntuación —medido: un
-    /// `º` (0xBA) salió como `]` (0x5D)— mientras firma el texto correcto. Ese
-    /// timbre no verifica tal cual **para nadie**, y acusarlo de firma inválida
-    /// sería acusar de adulterada a una factura legítima.
+    /// Por qué hace falta: hay facturadores cuyo generador de timbre y cuyo
+    /// firmador no producen exactamente el mismo texto. Medido sobre 109
+    /// facturas reales, dos familias de defecto:
     ///
-    /// Por qué es seguro: no se adivina el carácter, se **busca** el texto cuyo
-    /// SHA1 cuadra con el que la firma declara. Que cuadre es prueba, no
-    /// indicio: no se puede acertar un SHA1 por casualidad, y nadie puede usar
-    /// esto para hacer verificar un DD adulterado, porque eso exigiría encontrar
-    /// una colisión. Lo peor que puede pasar es gastar unos microsegundos y no
-    /// encontrar nada.
+    /// 1. **Carácter fuera del ASCII imprimible.** El modo texto de PDF417 no lo
+    ///    representa, y un encoder que no cambia a modo byte emite en su lugar
+    ///    uno de la tabla de puntuación: se midió un `º` (0xBA) impreso como `]`
+    ///    (0x5D).
+    /// 2. **Escapado XML inconsistente.** Se midió un DD firmado con `&quot;` e
+    ///    impreso con `"` literal, en el mismo documento donde el `&amp;` sí
+    ///    viajó escapado.
+    ///
+    /// Esos timbres no verifican tal cual **para nadie**, y acusarlos de firma
+    /// inválida sería acusar de adulterada a una factura legítima.
+    ///
+    /// Por qué es seguro: no se adivina nada, se **busca** el texto cuyo SHA1
+    /// cuadra con el que la firma declara. Que cuadre es prueba, no indicio: no
+    /// se puede acertar un SHA1 por casualidad, y nadie puede usar esto para
+    /// hacer verificar un DD adulterado, porque eso exigiría una colisión. Lo
+    /// peor que puede pasar es gastar unos microsegundos y no encontrar nada.
+    #[cfg(feature = "timbre")]
+    fn reparar(dd: &str, verifica: &dyn Fn(&str) -> bool) -> Option<String> {
+        // Variantes de escapado: se prueban todas las combinaciones de estas
+        // cuatro sustituciones globales, incluida la vacía.
+        const ESCAPES: [(&str, &str); 4] = [
+            ("\"", "&quot;"),
+            ("&quot;", "\""),
+            ("'", "&apos;"),
+            ("&amp;", "&"),
+        ];
+
+        for mascara in 0u8..(1 << ESCAPES.len()) {
+            let mut variante = dd.to_string();
+            for (i, (de, a)) in ESCAPES.iter().enumerate() {
+                if mascara & (1 << i) != 0 {
+                    variante = Self::sustituir_en_contenido(&variante, de, a);
+                }
+            }
+            if mascara != 0 && verifica(&variante) {
+                return Some(variante);
+            }
+            if let Some(r) = Self::reparar_un_caracter(&variante, verifica) {
+                return Some(r);
+            }
+        }
+        None
+    }
+
+    /// Sustituye sólo dentro del contenido de los elementos, nunca dentro de una
+    /// etiqueta.
+    ///
+    /// Necesario: el DD trae `version="1.0"` y `algoritmo="SHA1withRSA"`, y un
+    /// `replace` a secas de `"` por `&quot;` rompería esas comillas de atributo,
+    /// que son marcación y no texto. El defecto que se quiere reparar vive en el
+    /// valor de un elemento —se midió un `3"` de pulgadas firmado como
+    /// `3&quot;`—, nunca en la marcación.
+    #[cfg(feature = "timbre")]
+    fn sustituir_en_contenido(xml: &str, de: &str, a: &str) -> String {
+        let mut salida = String::with_capacity(xml.len());
+        let mut resto = xml;
+        while let Some(i) = resto.find('<') {
+            let (contenido, desde_tag) = resto.split_at(i);
+            salida.push_str(&contenido.replace(de, a));
+            match desde_tag.find('>') {
+                Some(j) => {
+                    salida.push_str(&desde_tag[..=j]);
+                    resto = &desde_tag[j + 1..];
+                }
+                None => {
+                    salida.push_str(desde_tag);
+                    return salida;
+                }
+            }
+        }
+        salida.push_str(&resto.replace(de, a));
+        salida
+    }
+
+    /// Sustituye UN carácter sospechoso por cada byte alto de Latin-1.
     ///
     /// Acotado a propósito: sólo posiciones cuyo carácter pertenece a la tabla
     /// de puntuación de PDF417 —los únicos que el encoder puede haber emitido
-    /// por este motivo—, de a UNA por vez, y nunca más de
-    /// `MAX_POSICIONES_A_REPARAR`. Sin ese tope, un DD con muchos corchetes
-    /// legítimos (`[BE]`, `[RT]` en descripciones de remedios: 29 apariciones en
-    /// el corpus) haría crecer el trabajo sin aportar nada.
+    /// por este motivo—, y nunca más de `MAX_POSICIONES`. Sin ese tope, un DD
+    /// con muchos corchetes legítimos (`[BE]`, `[RT]` en descripciones de
+    /// remedios: 29 apariciones en el corpus) haría crecer el trabajo sin
+    /// aportar nada.
     #[cfg(feature = "timbre")]
-    fn reparar(dd: &str, verifica: &dyn Fn(&str) -> bool) -> Option<String> {
+    fn reparar_un_caracter(dd: &str, verifica: &dyn Fn(&str) -> bool) -> Option<String> {
         /// Caracteres de la tabla de puntuación de PDF417 que **no tienen nada
-        /// que hacer dentro de un valor del TED**.
-        ///
-        /// El conjunto es angosto a propósito. La tabla completa incluye `<`,
-        /// `>`, `/`, `-`, `.`, `:` y comillas, que son la marcación XML del
-        /// propio DD: meterlos acá haría que cada DD tuviera cientos de
-        /// posiciones candidatas y el tope de abajo abortaría siempre. Lo que
-        /// queda son los que sólo pueden aparecer en una razón social o una
-        /// descripción, y que por lo tanto delatan una sustitución.
+        /// que hacer dentro de un valor del TED**. El conjunto es angosto: la
+        /// tabla completa incluye `<`, `>`, `/` y comillas, que son la marcación
+        /// XML del propio DD, y meterlos haría que cada DD tuviera cientos de
+        /// posiciones candidatas.
         const SOSPECHOSOS: &str = "[]\\_@;~`|{}^";
-        const MAX_POSICIONES_A_REPARAR: usize = 4;
+        const MAX_POSICIONES: usize = 4;
 
         let chars: Vec<char> = dd.chars().collect();
         let sospechosas: Vec<usize> = chars
@@ -306,7 +385,7 @@ impl TimbreManagerService {
             .filter(|(_, c)| SOSPECHOSOS.contains(**c))
             .map(|(i, _)| i)
             .collect();
-        if sospechosas.is_empty() || sospechosas.len() > MAX_POSICIONES_A_REPARAR {
+        if sospechosas.is_empty() || sospechosas.len() > MAX_POSICIONES {
             return None;
         }
 

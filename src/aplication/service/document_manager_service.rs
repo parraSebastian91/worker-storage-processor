@@ -16,7 +16,7 @@ use crate::domain::errors::media_error::MediaError;
 #[cfg(feature = "ocr")]
 use tracing::error;
 #[cfg(feature = "pdf")]
-use tracing::info;
+use tracing::{debug, info};
 use crate::domain::models::factura_data_model::InvoiceData;
 
 pub struct DocumentManagerService {}
@@ -189,6 +189,259 @@ impl DocumentManagerService {
                 }
             }
         }
+    }
+
+    /// Reconstruye el PDF417 cuando viene dibujado como miles de rectángulos en
+    /// vez de como una imagen.
+    ///
+    /// Hay un facturador —15% del corpus de 109 facturas reales— que dibuja el
+    /// timbre con ~19.000 paths. Rasterizar la página no sirve a ninguna
+    /// resolución (medido: 0/6 a 3000, 5000, 7000 y 9000 px) ni recortando la
+    /// región (0/3), porque el problema no es el muestreo sino la **geometría**:
+    /// las filas del símbolo son tan bajas respecto del ancho de módulo que la
+    /// imagen se lee como rayado vertical y el detector no encuentra las filas.
+    ///
+    /// Acá no se decodifica nada: se usan las coordenadas —que son exactas, sin
+    /// aliasing— para armar la matriz de módulos y repintarla con una proporción
+    /// sana. ZXing hace el resto (muestreo, codewords, Reed-Solomon sobre
+    /// GF(929)); reimplementar eso sería rehacer lo que ya está resuelto aguas
+    /// abajo del problema.
+    #[cfg(feature = "pdf")]
+    pub fn simbolo_vectorial_primera_pagina(
+        &self,
+        pdf_bytes: &[u8],
+    ) -> Result<Option<DynamicImage>, MediaError> {
+        use pdfium_render::prelude::PdfPageObjectCommon;
+
+        let pdfium = Self::pdfium()?;
+        let documento = pdfium
+            .load_pdf_from_byte_vec(pdf_bytes.to_vec(), None)
+            .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
+        let pagina = documento
+            .pages()
+            .iter()
+            .next()
+            .ok_or_else(|| MediaError::PdfRenderError("El PDF no contiene páginas".to_string()))?;
+
+        // Rectángulos candidatos: los paths chicos. Los bordes de tabla y las
+        // líneas del formulario son largos, y quedan fuera por tamaño.
+        let mut cajas: Vec<[f32; 4]> = Vec::new();
+        for objeto in pagina.objects().iter() {
+            if objeto.as_path_object().is_none() {
+                continue;
+            }
+            let Ok(b) = objeto.bounds() else { continue };
+            let (w, h) = (b.width().value, b.height().value);
+            if w > 0.0 && h > 0.0 && w < 20.0 && h < 20.0 {
+                cajas.push([b.left().value, b.bottom().value, b.right().value, b.top().value]);
+            }
+        }
+
+        // Un timbre son miles de módulos. Con menos, lo que haya es ruido del
+        // formulario y no vale la pena seguir.
+        const MIN_RECTANGULOS: usize = 500;
+        if cajas.len() < MIN_RECTANGULOS {
+            return Ok(None);
+        }
+
+        Ok(Self::matriz_a_imagen(&cajas))
+    }
+
+    /// Las cajas crudas de los rectángulos chicos de la primera página.
+    /// Diagnóstico del laboratorio: sirve para ver la geometría real antes de
+    /// decidir cómo se agrupa en módulos.
+    #[cfg(feature = "pdf")]
+    pub fn rectangulos_primera_pagina(&self, pdf_bytes: &[u8]) -> Result<Vec<[f32; 4]>, MediaError> {
+        use pdfium_render::prelude::PdfPageObjectCommon;
+        let pdfium = Self::pdfium()?;
+        let documento = pdfium
+            .load_pdf_from_byte_vec(pdf_bytes.to_vec(), None)
+            .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
+        let pagina = documento
+            .pages()
+            .iter()
+            .next()
+            .ok_or_else(|| MediaError::PdfRenderError("El PDF no contiene páginas".to_string()))?;
+        let mut cajas = Vec::new();
+        for objeto in pagina.objects().iter() {
+            if objeto.as_path_object().is_none() {
+                continue;
+            }
+            let Ok(b) = objeto.bounds() else { continue };
+            let (w, h) = (b.width().value, b.height().value);
+            if w > 0.0 && h > 0.0 && w < 20.0 && h < 20.0 {
+                cajas.push([b.left().value, b.bottom().value, b.right().value, b.top().value]);
+            }
+        }
+        Ok(cajas)
+    }
+
+    /// Pasa de rectángulos en puntos PDF a un bitmap de módulos.
+    ///
+    /// La medida que manda es el **paso** entre posiciones vecinas, no el tamaño
+    /// del rectángulo. Medido sobre los dos facturadores que dibujan el timbre:
+    /// uno usa módulos de 0,374 pt de ancho ubicados cada 0,5025, o sea que cada
+    /// módulo se dibuja **más angosto que su celda**. Eso deja una ranura blanca
+    /// entre módulos vecinos, así que una corrida de tres módulos oscuros no se
+    /// imprime como una barra ancha sino como tres barras finas separadas — y
+    /// PDF417 codifica precisamente en el ancho de las corridas.
+    ///
+    /// Por eso el símbolo impreso no decodifica a ninguna resolución: no es un
+    /// problema de muestreo, el dibujo está mal. Las coordenadas, en cambio,
+    /// dicen exactamente en qué celda va cada módulo.
+    #[cfg(feature = "pdf")]
+    fn matriz_a_imagen(cajas: &[[f32; 4]]) -> Option<DynamicImage> {
+        use image::{GrayImage, Luma};
+
+        // 1. Quedarse con los rectángulos del tamaño dominante. En la página hay
+        //    también líneas de formulario: medido, un PDF con 29.968 rectángulos
+        //    chicos trae además algunos de 13,25 pt de alto, que no son módulos.
+        let modal = |v: Vec<f32>| -> Option<f32> {
+            let mut conteo: Vec<(f32, usize)> = Vec::new();
+            for x in v {
+                match conteo.iter_mut().find(|(k, _)| (*k - x).abs() < 0.01) {
+                    Some((_, n)) => *n += 1,
+                    None => conteo.push((x, 1)),
+                }
+            }
+            conteo.into_iter().max_by_key(|(_, n)| *n).map(|(k, _)| k)
+        };
+        let w = modal(cajas.iter().map(|c| c[2] - c[0]).collect())?;
+        let h = modal(cajas.iter().map(|c| c[3] - c[1]).collect())?;
+        let modulos: Vec<[f32; 4]> = cajas
+            .iter()
+            .filter(|c| (c[2] - c[0] - w).abs() < w * 0.3 && (c[3] - c[1] - h).abs() < h * 0.3)
+            .copied()
+            .collect();
+        if modulos.len() < 500 {
+            return None;
+        }
+
+        // 2. El símbolo es el grupo denso. Rectángulos sueltos en otra parte de
+        //    la hoja estirarían el bounding box y la grilla saldría cualquier
+        //    cosa: medido, un salto de 361 pt entre dos filas.
+        let grupo = |vals: &[f32], salto_max: f32| -> (f32, f32) {
+            let mut v: Vec<f32> = vals.to_vec();
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let (mut mejor, mut ini) = ((v[0], v[0], 0usize), 0usize);
+            for i in 1..=v.len() {
+                if i == v.len() || v[i] - v[i - 1] > salto_max {
+                    if i - ini > mejor.2 {
+                        mejor = (v[ini], v[i - 1], i - ini);
+                    }
+                    ini = i;
+                }
+            }
+            (mejor.0, mejor.1)
+        };
+        let (gx0, gx1) = grupo(&modulos.iter().map(|c| c[0]).collect::<Vec<_>>(), w * 12.0);
+        let (gy0, gy1) = grupo(&modulos.iter().map(|c| c[1]).collect::<Vec<_>>(), h * 12.0);
+        let modulos: Vec<[f32; 4]> = modulos
+            .into_iter()
+            .filter(|c| c[0] >= gx0 - w && c[0] <= gx1 + w && c[1] >= gy0 - h && c[1] <= gy1 + h)
+            .collect();
+        if modulos.len() < 500 {
+            debug!(modulos = modulos.len(), "Tras agrupar no quedan módulos suficientes");
+            return None;
+        }
+
+        // 3. El paso es la distancia MÁS FRECUENTE entre posiciones vecinas, no
+        //    la mínima. Medido: hay facturadores cuyas coordenadas traen jitter
+        //    de 0,01 pt, y tomar el mínimo daría un paso cien veces menor que el
+        //    módulo real.
+        let paso = |vals: &[f32]| -> Option<f32> {
+            let mut v: Vec<f32> = vals.to_vec();
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v.dedup_by(|a, b| (*a - *b).abs() < 0.05);
+            modal(v.windows(2).map(|w| w[1] - w[0]).collect())
+        };
+        let paso_x = paso(&modulos.iter().map(|c| c[0]).collect::<Vec<_>>())?;
+        let paso_y = paso(&modulos.iter().map(|c| c[1]).collect::<Vec<_>>())?;
+        if paso_x <= 0.0 || paso_y <= 0.0 {
+            return None;
+        }
+
+        let x0 = modulos.iter().map(|c| c[0]).fold(f32::INFINITY, f32::min);
+        let y1 = modulos.iter().map(|c| c[3]).fold(f32::NEG_INFINITY, f32::max);
+        let celda = |v: f32, paso: f32| (v / paso).round() as i64;
+        // La fila va por PISO y no por redondeo: si el facturador subdivide cada
+        // módulo en dos cuadrados apilados, el de abajo cae a media celda y el
+        // redondeo lo mandaría a la fila siguiente, partiendo cada fila en dos.
+        let fila_de = |v: f32, paso: f32| (v / paso + 1e-3).floor() as i64;
+        let columnas = modulos.iter().map(|c| celda(c[0] - x0, paso_x)).max()? + 1;
+        let filas = modulos.iter().map(|c| fila_de(y1 - c[3], paso_y)).max()? + 1;
+
+        // PDF417 admite de 3 a 90 filas, y una fila mide 17·(columnas+4)+1
+        // módulos, así que menos de 17 de ancho no es un símbolo.
+        // Una fila de PDF417 mide SIEMPRE 17·k+1 módulos, y el símbolo tiene a
+        // lo sumo 90 filas. Esas dos invariantes alcanzan para corregir el caso
+        // en que el facturador dibuja cada módulo subdividido: medido, uno pinta
+        // cada módulo como dos cuadrados apilados, así que el paso vertical
+        // observado es la mitad del alto real de fila y salían 172 filas donde
+        // hay 86.
+        let factor_y = ((filas as f32) / 90.0).ceil().max(1.0) as i64;
+        let (paso_y, filas) = (paso_y * factor_y as f32, (filas + factor_y - 1) / factor_y);
+
+        debug!(
+            modulos = modulos.len(),
+            paso_x, paso_y, columnas, filas, factor_y,
+            "Geometría del timbre vectorial"
+        );
+        if !(3..=90).contains(&filas) || !(17..=4000).contains(&columnas) {
+            return None;
+        }
+        // Si el ancho no es 17·k+1, lo que se agrupó no es un PDF417 y seguir
+        // sólo gastaría tiempo del decodificador.
+        if (columnas - 1) % 17 != 0 {
+            debug!(columnas, "El ancho no es 17·k+1: lo agrupado no es un PDF417");
+            return None;
+        }
+        let (columnas, filas) = (columnas as usize, filas as usize);
+
+        let mut matriz = vec![vec![false; columnas]; filas];
+        for c in &modulos {
+            let col = celda(c[0] - x0, paso_x) as usize;
+            // Cuántas celdas cubre: 1 si hay un rectángulo por módulo, N si el
+            // facturador fusionó la corrida en uno solo.
+            let ancho = ((((c[2] - c[0]) / paso_x).round()) as usize).max(1);
+            let fil = (fila_de(y1 - c[3], paso_y) as usize).min(filas - 1);
+            let alto = ((((c[3] - c[1]) / paso_y).round()) as usize).max(1);
+            for r in fil..(fil + alto).min(filas) {
+                for k in col..(col + ancho).min(columnas) {
+                    matriz[r][k] = true;
+                }
+            }
+        }
+
+        // 4. Repintado con proporción sana y sin ranuras: los módulos vecinos se
+        //    tocan, que es lo que el símbolo original no hace. El margen (quiet
+        //    zone) es obligatorio para que el detector encuentre los patrones de
+        //    inicio y fin.
+        const PX_MODULO: u32 = 3;
+        const PX_FILA: u32 = 9;
+        const MARGEN: u32 = PX_MODULO * 4;
+
+        let ancho_img = columnas as u32 * PX_MODULO + MARGEN * 2;
+        let alto_img = filas as u32 * PX_FILA + MARGEN * 2;
+        let mut img = GrayImage::from_pixel(ancho_img, alto_img, Luma([255u8]));
+        for (r, fila) in matriz.iter().enumerate() {
+            for (c, &negro) in fila.iter().enumerate() {
+                if !negro {
+                    continue;
+                }
+                for dy in 0..PX_FILA {
+                    for dx in 0..PX_MODULO {
+                        img.put_pixel(
+                            MARGEN + c as u32 * PX_MODULO + dx,
+                            MARGEN + r as u32 * PX_FILA + dy,
+                            Luma([0u8]),
+                        );
+                    }
+                }
+            }
+        }
+        info!("Timbre vectorial reconstruido: {columnas} módulos × {filas} filas");
+        Some(DynamicImage::ImageLuma8(img))
     }
 
     /// Cuántos objetos de cada clase tiene la primera página: (paths, imágenes,

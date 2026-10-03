@@ -66,6 +66,8 @@ fn main() {
     // lo que dice por qué una factura cae al render de página, que cuesta un
     // orden de magnitud más.
     let imgs = todos.iter().any(|a| a == "--imgs");
+    // `--vectorial` prueba la reconstrucción del símbolo desde los rectángulos.
+    let vectorial = todos.iter().any(|a| a == "--vectorial");
     let args: Vec<String> = todos.into_iter().filter(|a| !a.starts_with("--")).collect();
     if args.is_empty() {
         eprintln!("uso: lab-extraccion <carpeta|pdf>…");
@@ -97,6 +99,68 @@ fn main() {
                 continue;
             }
         };
+        if vectorial {
+            if let Ok(cajas) = documentos.rectangulos_primera_pagina(&bytes) {
+                let mut anchos: Vec<f32> = cajas.iter().map(|c| c[2] - c[0]).collect();
+                let mut altos: Vec<f32> = cajas.iter().map(|c| c[3] - c[1]).collect();
+                anchos.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                altos.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let q = |v: &Vec<f32>, p: f32| v[((v.len() as f32 - 1.0) * p) as usize];
+                println!(
+                    "   {} rects · ancho min {:.3} p25 {:.3} mediana {:.3} max {:.3} · alto min {:.3} mediana {:.3} max {:.3}",
+                    cajas.len(), anchos[0], q(&anchos, 0.25), q(&anchos, 0.5), anchos[anchos.len()-1],
+                    altos[0], q(&altos, 0.5), altos[altos.len()-1]
+                );
+                // Alturas distintas que aparecen, redondeadas: dicen si hay una
+                // sola altura de fila o varias.
+                let mut vistas: Vec<String> = Vec::new();
+                for a in &altos {
+                    let r = format!("{:.2}", a);
+                    if !vistas.contains(&r) { vistas.push(r); }
+                    if vistas.len() > 12 { break; }
+                }
+                println!("   alturas distintas: {}", vistas.join(" "));
+                // Posiciones distintas: con un rectángulo por módulo, esto da
+                // filas y columnas exactas, sin estimarlas desde el bounding box.
+                let mut xs: Vec<i64> = cajas.iter().map(|c| (c[0] * 100.0).round() as i64).collect();
+                let mut ys: Vec<i64> = cajas.iter().map(|c| (c[1] * 100.0).round() as i64).collect();
+                xs.sort_unstable(); xs.dedup();
+                ys.sort_unstable(); ys.dedup();
+                println!("   posiciones X distintas: {} · Y distintas: {}", xs.len(), ys.len());
+                if ys.len() > 1 {
+                    let mut pasos: Vec<i64> = ys.windows(2).map(|w| w[1] - w[0]).collect();
+                    pasos.sort_unstable(); pasos.dedup();
+                    println!("   saltos entre filas (centésimas de punto): {:?}", &pasos[..pasos.len().min(8)]);
+                }
+                if xs.len() > 1 {
+                    let mut pasos: Vec<i64> = xs.windows(2).map(|w| w[1] - w[0]).collect();
+                    pasos.sort_unstable(); pasos.dedup();
+                    println!("   saltos entre columnas: {:?}", &pasos[..pasos.len().min(8)]);
+                }
+            }
+            match documentos.simbolo_vectorial_primera_pagina(&bytes) {
+                Ok(Some(sim)) => {
+                    let _ = sim.save(format!("/tmp/vectorial-{}.png", nombre(&ruta).replace(['/', ' '], "_")));
+                    let t0 = Instant::now();
+                    let lectura = timbres.leer(&sim);
+                    let ms = t0.elapsed().as_millis();
+                    match lectura {
+                        Some(l) => println!(
+                            "{:<42} {}x{} → folio {} monto {} · {:?} ({ms} ms)",
+                            nombre(&ruta), sim.width(), sim.height(),
+                            l.ted.folio, l.ted.monto_total, l.verificacion
+                        ),
+                        None => println!(
+                            "{:<42} {}x{} reconstruido, pero NO decodifica ({ms} ms)",
+                            nombre(&ruta), sim.width(), sim.height()
+                        ),
+                    }
+                }
+                Ok(None) => println!("{:<42} sin rectángulos suficientes", nombre(&ruta)),
+                Err(e) => println!("{:<42} error: {e}", nombre(&ruta)),
+            }
+            continue;
+        }
         if imgs {
             let v = documentos.imagenes_embebidas_primera_pagina(&bytes).unwrap_or_default();
             let (paths, top, textos) =
@@ -116,7 +180,13 @@ fn main() {
         if ted_crudo {
             let imagenes =
                 documentos.imagenes_embebidas_primera_pagina(&bytes).unwrap_or_default();
-            let crudo = imagenes.iter().find_map(|i| timbres.decodificar(i)).or_else(|| {
+            let crudo = documentos
+                .simbolo_vectorial_primera_pagina(&bytes)
+                .ok()
+                .flatten()
+                .and_then(|sim| timbres.decodificar(&sim))
+                .or_else(|| imagenes.iter().find_map(|i| timbres.decodificar(i)))
+                .or_else(|| {
                 documentos
                     .render_first_page_png_from_pdf(&bytes)
                     .ok()
