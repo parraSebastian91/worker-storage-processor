@@ -506,6 +506,13 @@ impl DocumentManagerService {
     /// imagen y no trae timbre: una orden de compra escaneada, una guía
     /// fotografiada. Y porque tirarlo obligaría a reescribir el teselado de la
     /// página, que es lo caro de volver a hacer.
+    ///
+    /// Al jubilar los extractores cayó también el **segundo pase de Tesseract**
+    /// por tesela. Existía para encontrar el token `Nº` con una binarización más
+    /// fina, y su resultado terminaba sólo en un `info!` sobre un campo que ya no
+    /// se extrae: era duplicar el trabajo más caro del worker para escribir una
+    /// línea de log. Lo que queda es un pase por tesela y texto crudo, sin
+    /// normalizar — crudo quiere decir crudo.
     pub fn extract_text_from_pdf(
         &self,
         pdf_bytes: &[u8],
@@ -544,8 +551,6 @@ impl DocumentManagerService {
     ) -> Result<String, MediaError> {
         use image::GenericImageView;
 
-        let numero_regex = Regex::new(r"(?i)\bN(?:[º°o]|o)?\s*([0-9]{1,8})\b")
-            .map_err(|e| MediaError::OCRError(e.to_string()))?;
         let mut full_text = String::new();
 
         let i: usize = 0;
@@ -572,17 +577,11 @@ impl DocumentManagerService {
             let tile = page_image.crop_imm(0, y, img_w, h);
 
             let gray = tile.grayscale().to_luma8();
-            let bw = Self::to_binary(gray.clone(), 150); // OCR general
-            let bw_thin = Self::to_binary(gray, 130); // líneas más finas para tokens tipo N°/Nº
+            let bw = Self::to_binary(gray, 150);
 
             let mut bw_cursor = Cursor::new(Vec::new());
             DynamicImage::ImageLuma8(bw)
                 .write_to(&mut bw_cursor, ImageFormat::Png)
-                .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
-
-            let mut bw_thin_cursor = Cursor::new(Vec::new());
-            DynamicImage::ImageLuma8(bw_thin)
-                .write_to(&mut bw_thin_cursor, ImageFormat::Png)
                 .map_err(|e| MediaError::PdfRenderError(e.to_string()))?;
 
             let tile_text = match Tesseract::new(None, Some(language))
@@ -625,48 +624,6 @@ impl DocumentManagerService {
                 }
             };
 
-            let tile_numero_text = match Tesseract::new(None, Some(language))
-                .map_err(|e| MediaError::OCRError(e.to_string()))?
-                .set_variable("user_defined_dpi", "300")
-                .map_err(|e| MediaError::OCRError(e.to_string()))?
-                .set_variable("preserve_interword_spaces", "1")
-                .map_err(|e| MediaError::OCRError(e.to_string()))?
-                .set_variable("tessedit_pageseg_mode", "7")
-                .map_err(|e| MediaError::OCRError(e.to_string()))?
-                .set_variable("tessedit_char_whitelist", "Nnº°oO0123456789")
-                .map_err(|e| MediaError::OCRError(e.to_string()))?
-                .set_image_from_mem(bw_thin_cursor.get_ref())
-                .map_err(|e| MediaError::OCRError(e.to_string()))?
-                .recognize()
-            {
-                Ok(mut tess) => match tess.get_text() {
-                    Ok(text) => text,
-                    Err(e) => {
-                        error!("Error obteniendo texto OCR focalizado: {}", e);
-                        let err_str = e.to_string();
-                        if err_str.contains("too small") || err_str.contains("cannot be recognized") {
-                            info!("Tile numero {}/{} página {}: Imagen demasiado pequeña o no reconocible, saltando", row + 1, tile_rows, i + 1);
-                            y += h;
-                            continue;
-                        }
-                        return Err(MediaError::OCRError(err_str));
-                    }
-                },
-                Err(e) => {
-                    error!("Error obteniendo texto OCR focalizado: {}", e);
-                    let err_str = e.to_string();
-                    if err_str.contains("too small") || err_str.contains("cannot be recognized") {
-                        info!("Tile numero {}/{} página {}: Tesseract error (imagen pequeña), saltando", row + 1, tile_rows, i + 1);
-                        y += h;
-                        continue;
-                    }
-                    return Err(MediaError::OCRError(err_str));
-                }
-            };
-
-            let normalized_tile_text = Self::normalize_numero_variants(&tile_text);
-            let normalized_numero_text = Self::normalize_numero_variants(&tile_numero_text);
-
             info!(
                 "Tile {}/{} página {}: {:?}",
                 row + 1,
@@ -675,14 +632,8 @@ impl DocumentManagerService {
                 tile_text.trim()
             );
 
-            if let Some(caps) = numero_regex.captures(&normalized_numero_text) {
-                info!("Patrón Nº detectado en OCR focalizado: Nº{}", &caps[1]);
-            } else if let Some(caps) = numero_regex.captures(&normalized_tile_text) {
-                info!("Patrón Nº detectado en OCR general: Nº{}", &caps[1]);
-            }
-
-            if !normalized_tile_text.trim().is_empty() {
-                full_text.push_str(normalized_tile_text.trim());
+            if !tile_text.trim().is_empty() {
+                full_text.push_str(tile_text.trim());
                 full_text.push('\n');
             }
             y += h;
